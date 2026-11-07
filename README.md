@@ -32,6 +32,20 @@ flowchart LR
 
 More on what it does and doesn't guard against: [`SECURITY.md`](SECURITY.md).
 
+## How it works
+
+Four steps, each in a file you can read.
+
+**1. Your device registers itself.** When you choose Open source plugins, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's API with your key. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
+
+**2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it's the `post_llm_call`, `on_session_end` and `on_human_input_request` hooks ([`hermes/__init__.py`](hermes/__init__.py)).
+
+**3. It decides, then seals.** The same rules our relay uses pick an alert, a silent refresh or nothing ([`openclaw/route.ts`](openclaw/route.ts), and `reply_kind` in [`hermes/__init__.py`](hermes/__init__.py)). It numbers each message so it can't be shown twice, pads it to 2048 bytes, and encrypts it to your device's key with Web Push's standard `aes128gcm` (RFC 8291), using only Node's or Python's own crypto ([`openclaw/seal.ts`](openclaw/seal.ts), [`hermes/seal.py`](hermes/seal.py)).
+
+**4. It posts the sealed message to our forwarder**, with one word beside it: alert or silent. That's the only request either plugin makes to the internet. The forwarder hands it to Apple, and your device's notification extension opens it with the private key, checks its number and shows it.
+
+The exact message format, what the forwarder does with it and how it answers are in [`PROTOCOL.md`](PROTOCOL.md). Both plugins and the app are tested against the same sealed messages in [`test-vectors/`](test-vectors/).
+
 ## Install
 
 ### OpenClaw
