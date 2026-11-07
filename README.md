@@ -1,8 +1,11 @@
 # Clawy notifications
 
+> [!NOTE]
+> Clawy is in internal alpha testing. "Clawy" is a working name, and the plugins, their install commands and this repo's name may still change before release.
+
 Plugins for [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) that keep the text of your notifications away from Clawy's server.
 
-Clawy is a closed source iPhone and iPad app for agents you host yourself, in testing under that working name for now. Apple only delivers notifications through a server, so by default Clawy's relay receives each alert from your gateway and decides what to show. With one of these plugins, your gateway decides instead. It seals each alert to a key that only your device holds and hands our server a blob it can't open.
+Clawy is a closed source iPhone and iPad app for agents you host yourself. Apple only delivers notifications through a server, so by default Clawy's relay receives each alert from your gateway and decides what to show. With one of these plugins, your gateway decides instead. It seals each alert to a key that only your device holds and hands our server a blob it can't open.
 
 ```mermaid
 flowchart LR
