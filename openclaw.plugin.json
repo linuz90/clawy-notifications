@@ -1,0 +1,8 @@
+{
+  "id": "clawy-notifications",
+  "name": "Clawy notifications",
+  "description": "Decides on your gateway what should alert, seals it to your device's key, and hands the ciphertext to Clawy's forwarder.",
+  "categories": ["other"],
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

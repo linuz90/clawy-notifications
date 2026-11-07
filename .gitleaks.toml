@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+# Throwaway keys, there to be opened by every implementation.
+[allowlist]
+paths = ['''test-vectors/.*\.json''']

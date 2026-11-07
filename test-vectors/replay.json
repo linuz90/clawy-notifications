@@ -1,0 +1,15 @@
+{
+  "about": "What a device does with a run of seq numbers. Each step arrives in order; `opens` says whether it opens. The window is ten minutes in milliseconds.",
+  "windowMs": 600000,
+  "steps": [
+    { "seq": 1000000000, "opens": true },
+    { "seq": 1000000000, "opens": false },
+    { "seq": 1000000500, "opens": true },
+    { "seq": 1000000250, "opens": true },
+    { "seq": 1000000250, "opens": false },
+    { "seq": 1000700000, "opens": true },
+    { "seq": 1000000500, "opens": false },
+    { "seq": 1000100000, "opens": true },
+    { "seq": 1000099999, "opens": false }
+  ]
+}

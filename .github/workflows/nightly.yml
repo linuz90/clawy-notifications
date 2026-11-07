@@ -1,0 +1,38 @@
+name: Nightly contract
+
+# Both gateways change fast, and an update could break a plugin without anything else noticing. This
+# installs the plugins from git on the newest releases and opens an issue if that stops working.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gateway: [openclaw, hermes]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v7
+      - name: ${{ matrix.gateway }}, newest release
+        run: node test/contract/${{ matrix.gateway }}.mjs
+      - name: Open an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Nightly contract failed: ${{ matrix.gateway }}"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq length)
+          if [ "$open" = "0" ]; then
+            gh issue create --title "$title" --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi

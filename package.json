@@ -1,0 +1,28 @@
+{
+  "name": "clawy-notifications",
+  "version": "0.2.0",
+  "description": "Sealed push notifications for Clawy: routes alerts on your own gateway and encrypts them to your device.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "openclaw/dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE",
+    "PROTOCOL.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./openclaw/dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "node openclaw/build.mjs",
+    "test": "node --test --experimental-strip-types openclaw/test/*.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/linuz90/clawy-notifications.git"
+  },
+  "private": true
+}

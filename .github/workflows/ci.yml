@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: dist matches the source
+        run: node openclaw/build.mjs && git diff --exit-code openclaw/dist
+      - name: OpenClaw plugin
+        run: npm test
+      - name: Hermes plugin
+        run: |
+          pip install cryptography aiohttp
+          cd hermes && python -m unittest
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
