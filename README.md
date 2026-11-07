@@ -4,9 +4,9 @@ Plugins for [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](
 
 Clawy is a closed source iPhone and iPad app for agents you host yourself. Apple only delivers notifications through a server, so by default Clawy's relay receives each alert from your gateway and decides what to show. With one of these plugins, your gateway decides instead. It seals each alert to a key that only your device holds and hands our server a blob it can't open.
 
-```
-Relay:   gateway → our server (reads it, decides) → Apple → phone
-Plugin:  gateway + plugin (decides, seals) → our server (passes it on) → Apple → phone (opens it)
+```mermaid
+flowchart LR
+  G["Your gateway<br/>seals the alert"] --> S["Clawy's server<br/>can't open it"] --> A["Apple<br/>can't open it"] --> P["Your phone<br/>opens it"]
 ```
 
 ## What this protects
