@@ -11,23 +11,23 @@ Plugin:  gateway + plugin (decides, seals) → our server (passes it on) → App
 
 ## What this protects
 
-**Our server can't read your notifications.** It gets a fixed-size sealed body and has no key that opens it. Every body is the same 2867 characters, so its length says nothing about its text.
+**Our server can't read your notifications.** Your gateway seals each alert to a key only your device holds, so our server passes along something it can't open, and keeps no record of it. Every sealed alert is the same size, so even its length says nothing.
 
-**Apple can't read them either.** It sees the same body, behind the words "New notification".
+**Neither can Apple.** It sees the same sealed alert, behind the words "New notification".
 
-**Someone who steals our Apple key can't read them, or replay old ones.** Each message carries a number that opens only once. They can't aim your gateway at another server, because the address is fixed in the plugin's source. They can't make Allow approve anything other than the command the alert shows.
+**An alert does what it says.** Each one opens once, only on your device, and Allow approves exactly the command the alert shows.
 
-## What it doesn't protect
+## What it doesn't change
 
-**The app sees your chats.** Clawy is a client for your gateway, and it's closed source, so you're trusting it with everything it shows you. These plugins take our server out of the reading. They do nothing about the app.
+**The app sees your chats.** Clawy is a closed source client for your gateway, so you trust it with what it shows you, as with any client. These plugins take our server out of the picture, not the app.
 
-**Our server and Apple still see metadata:** your device's push token, its device id, when alerts happen, whether each one is an alert or silent, and your gateway's IP address (our server only).
+**Apple and our server still know when to wake your device.** They see that a notification is on its way, and whether it's an alert or a quiet background refresh. Never what it says.
 
-**Someone with our Apple key can still reach your screen.** They can drop or delay your pushes, and they can send a push of their own. A push the app can't open shows only "New notification", but one sent so that the app never sees it first can show any words they like, and buttons too. None of it does anything: Allow won't work on it, and tapping it opens nothing. The app needs a special permission from Apple to block those outright, and it doesn't have it.
+**The plugin sees your alerts.** It runs inside your gateway, with its access. It's under 500 lines per gateway with no dependencies of its own, so you can read it.
 
-**The plugin sees what your alerts contain.** It runs inside your gateway, with its access. It's under 500 lines per gateway with no dependencies of its own, so you can read it.
+**It's for a gateway with one owner.** Every device registered with the plugin gets every alert.
 
-**Every registered device gets every alert.** A gateway's per-user access checks don't apply here, so this suits a gateway with one owner.
+More on what it does and doesn't guard against: [`SECURITY.md`](SECURITY.md).
 
 ## Install
 

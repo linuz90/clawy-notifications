@@ -12,10 +12,12 @@ Please report a vulnerability privately, through GitHub's [private reporting](ht
 
 ## Known limits
 
-[`README.md`](README.md) lists what the plugins don't protect. These are known, and need no report:
+These are known, and need no report:
 
-- Someone holding Clawy's Apple key can drop or delay pushes, and can show a banner of their own by sending a push that skips the notification extension. Nothing on it works.
+- Whoever can send pushes for Clawy can drop or delay them, and can send a notification the app never processes. iOS shows that one with whatever text it carries. The app ignores it otherwise: a tap opens nothing and Allow approves nothing. Blocking it outright needs an Apple entitlement Clawy doesn't have.
 - A client with `operator.approvals` and `operator.questions` on your gateway can register a device, and that device then gets every alert.
 - The Clawy app is closed source.
+
+[`PROTOCOL.md`](PROTOCOL.md) has the details: what's sealed, how a device rejects replays, and what the forwarder accepts.
 
 Clawy's own code isn't in this repository. Report problems with the app or the relay the same way.
