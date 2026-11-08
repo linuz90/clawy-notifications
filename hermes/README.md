@@ -1,12 +1,12 @@
 # Clawy notifications for Hermes
 
-A standalone Hermes Agent plugin that chooses alerts locally, seals each to a device's P-256 key, and sends ciphertext to that device's forwarder. Tested against Hermes `v0.22.7` and `v0.23.0`. MIT licensed. Uses Hermes's pinned `cryptography`, Python's standard library, and the API server's existing `aiohttp`; adds no dependencies.
+A standalone Hermes Agent plugin that chooses alerts locally, seals each to a device's P-256 key, and sends ciphertext to that device's forwarder. Tested against Hermes `v0.22.7` and `v0.23.0`. MIT licensed. Uses Hermes's pinned `cryptography`, Python's standard library, the API server's existing `aiohttp`, and the dashboard's existing FastAPI; adds no dependencies.
 
 ## Audit it
 
-- `__init__.py` registers three observers, four authenticated HTTP routes under `/v1/clawy/` (status, register, unregister, test) and one CLI command. It receives final reply text, turn outcomes and redacted approval/question prompts. It neither reads transcript files nor registers an LLM tool. `post_llm_call` also supplies history and the user prompt, which this plugin ignores.
+- `__init__.py` registers three observers, four legacy API-server routes under `/v1/clawy/` and one CLI command. `dashboard/plugin_api.py` adds status, register, unregister and test under `/api/plugins/clawy-notifications/`, behind the dashboard's authentication and profile gates. It resolves the current observer through Hermes's private `get_plugin_manager()._plugins` registry, failing closed if it is absent, disabled or unloaded. It receives final reply text, turn outcomes and redacted approval/question prompts. It neither reads transcript files nor registers an LLM tool. `post_llm_call` also supplies history and the user prompt, which this plugin ignores.
 - `seal.py` implements RFC 8291 `aes128gcm`. Every padded plaintext is exactly 2048 bytes, including the final-record delimiter; every sealed body is 2150 bytes (2867 unpadded base64url characters). Oversize bodies are shortened on character boundaries with `…`. Oversize routing metadata is dropped, never truncated into a different route.
-- `delivery.py` stores registrations at `$HERMES_HOME/clawy-notifications.json` and the last sequence number at `$HERMES_HOME/clawy-notifications.sequence`, both atomically replaced with mode `0600`, under a cross-process lock. A registration replaces its id. The file contains the forward URL/token, public key, auth secret, display name and text preference. It contains no device private key or notification history.
+- `delivery.py` stores registrations at `$HERMES_HOME/clawy-notifications.json` one sequence file at `<Hermes root>/clawy-notifications.sequence` shared across profiles, and the latest delivery sequence/status/time per device at `$HERMES_HOME/clawy-notifications.deliveries`, atomically replaced with mode `0600`, under a cross-process lock. Delivery health is shared with dashboard routes hosted in another process, survives restart, and ignores late answers for replaced registrations. The root sequence lock prevents two profiles sending the same replay number to one device. A registration replaces its id. The file contains the forward URL/token, public key, auth secret, display name and text preference. It contains no device private key or notification history.
 - Only `{"kind":"alert|silent","sealed":"…"}` and a bearer token leave for the registered URL. The forwarder learns a device, timing and alert versus silent. `text: false` removes `body` before sealing. TLS is required except for numeric loopback addresses used by tests. Redirects and environment proxies are disabled.
 - One daemon worker posts outside hooks: a 64-event memory queue, five-second HTTP timeout, one retry for `502`, no other retries. `401` and `410` remove that exact registration, preserving a later replacement. A `404` says nothing about the device, so it stays. `400`/`413` log a generic bug warning; `429` drops without retry. Logs never include content, commands, URLs, tokens, keys or exception text.
 
@@ -16,7 +16,7 @@ Delivery is best effort. Queue overflow, process exit, offline delivery and time
 
 `post_llm_call` captures `assistant_response`; canonical `on_session_end` decides whether the turn completed, failed or was interrupted. Interrupted turns and reduced legacy exit events send nothing. Session keys are `agent:<profile>:<session_id>`, default profile `default`.
 
-App sessions (`ios-native-`, `dashboard:`) alert with their reply. `main`, heartbeat, `cron:`, legacy `cron_` and `subagent:` replies send nothing. Other sessions produce silent `refresh`. Clawy shows only `api_server` topics on Hermes, so nothing uses these refreshes yet.
+A session whose hook `platform` is `clawy` alerts with its reply. Hermes derives the agent platform from the stored session source, so this covers server-minted dashboard ids. Legacy `ios-native-` ids still alert. `dashboard:` alone no longer marks a Clawy chat. `main`, heartbeat, `cron:`, legacy `cron_` and `subagent:` replies send nothing. Other sessions produce silent `refresh`, letting Clawy update chats from other surfaces without duplicating their own alerts. The plugin has no device-specific followed-chat list.
 
 `on_human_input_request` alerts for `approval` and `clarify`, from any session, with `hermes:<request_id>` ids. Sudo prompts are ignored. `on_human_input_resolved` and `post_approval_response` exist; resolved requests send nothing, so this plugin does not subscribe. `pre_approval_request` is not used because the human-input hook also covers questions and provides consistently redacted prompts.
 
@@ -26,9 +26,11 @@ For cron agent turns, `on_session_end(failed=True)` plus `ctx.current_cron_execu
 
 ## Register without a model seeing secrets
 
-On the API listener's own profile, Clawy POSTs the protocol's registration JSON directly to `/v1/clawy/devices`, with `Authorization: Bearer <profile-api-key>`. Success is `200 {"ok":true}`; invalid registrations are `400`, oversized ones `413`, missing or invalid API keys `401`. The route explicitly calls the API adapter's authentication check, as custom routes aren't authenticated automatically. No registration secret reaches a chat, tool result or log. Protect the device-to-Hermes connection with HTTPS outside loopback.
+Clawy POSTs the protocol's registration JSON directly to `/api/plugins/clawy-notifications/devices?profile=<profile>`, using its dashboard bearer credential or a local loopback token. Status is `GET /status`, removal `DELETE /devices/<id>`, and Send Test `POST /devices/<id>/test`, under the same prefix and profile query. The dashboard authenticates these routes before plugin dispatch. Success is `200 {"ok":true}`; invalid registrations are `400`, oversized ones `413`, and missing authentication `401`. No registration secret reaches a chat, tool result or log. Protect the connection with HTTPS outside loopback.
 
-Hermes `v0.22.7` places its `/p/{profile}/…` catch-all before custom plugin routes, so this endpoint is unavailable to multiplexed sibling profiles. Run the CLI in that profile's home instead:
+Each selected profile owns its registrations and observers. Install and enable the plugin in each selected profile (`hermes -p <profile> plugins install … --enable`), including `default` when selected. Clawy registers the recipient in every selected profile, reads their status and keeps the newest delivery sequence for each device. A missing profile installation means setup is incomplete. Send Test sends once, through the first selected profile.
+
+The old `/v1/clawy/*` routes remain for API-server clients, explicitly checking the listener's profile key. Hermes `v0.22.7` shadows these routes under `/p/<profile>/`; dashboard routes avoid that limitation. CLI registration is also available in the profile's home:
 
 ```sh
 hermes clawy-notifications add < /secure/path/device-registration.json
@@ -38,11 +40,11 @@ Passing the JSON as an argument also works, but it exposes the token and auth se
 
 ## Install
 
-See the [README](../README.md#install). Use Hermes's default `plugins.isolation: in_process`: hosted plugins can't register native platform handlers, and the HTTP route depends on that API. Enabling may live-reload hooks, but a restart is required to mount the route before aiohttp freezes its router. Hermes refuses a restart during live turns, so restart after they finish.
+See the [README](../README.md#install). Use Hermes's default `plugins.isolation: in_process`: hosted plugins can't register native platform handlers, and the legacy HTTP route depends on that API. Dashboard sibling-profile routes may run in Hermes's separate plugin host; their registrations and delivery health use the same locked files as the turn observers. Enabling may live-reload hooks, but a restart is required to mount the route before aiohttp freezes its router. Hermes refuses a restart during live turns, so restart after they finish.
 
 ## Test
 
-In an environment with `cryptography` and `aiohttp`, from this directory:
+In an environment with `cryptography` and `aiohttp`, from this directory (FastAPI and httpx, already in Hermes's dashboard environment, also exercise dashboard routes):
 
 ```sh
 python -m unittest
@@ -52,4 +54,4 @@ The tests open a loopback HTTP server. The receiver is a separate HMAC/HKDF impl
 
 ## What could break between Hermes releases
 
-The contract test runs nightly against the newest release and checks the hook names, the private adapter methods and the routes. A turn needs a model, so it can't check the rest. On a failure, or a new release, reread `agent/turn_finalizer.py`, `tools/human_input_hooks.py`, `hermes_cli/plugins_dispatch.py`, `gateway/platforms/api_server.py` and `cron/execution_identity.py`. This plugin depends on the hook kwargs, their order and copied cron context, `ctx.profile_name`, `ctx.current_cron_execution()`, platform-handler wiring and CLI argument setup. Its route uses the private adapter methods `_check_auth` and `_expected_api_key`, and a rename must fail closed. Hook dispatch waits for callbacks, which is why nothing here does network work inside a hook.
+The contract test runs nightly against the newest release and checks the hook names, the private adapter methods and the legacy API routes. Dashboard registration is also checked live on the launch profile and a sibling; its unit tests cover input bounds and shared delivery health. A turn needs a model, so it can't check the rest. On a failure, or a new release, reread `agent/turn_finalizer.py`, `tools/human_input_hooks.py`, `hermes_cli/plugins_dispatch.py`, `gateway/platforms/api_server.py` and `cron/execution_identity.py`. This plugin depends on the hook kwargs, their order and copied cron context, `ctx.profile_name`, `ctx.current_cron_execution()`, platform-handler wiring and CLI argument setup. The dashboard route also depends on `get_plugin_manager()._plugins`, profile-scoped discovery, and the `LoadedPlugin.module`/`enabled` fields; test authenticated and unauthenticated calls on both the launch profile and a sibling. Its legacy route uses the private adapter methods `_check_auth` and `_expected_api_key`, and a rename must fail closed. Hook dispatch waits for callbacks, which is why nothing here does network work inside a hook.

@@ -36,7 +36,7 @@ More on what it does and doesn't guard against: [`SECURITY.md`](SECURITY.md).
 
 Four steps, each in a file you can read.
 
-**1. Your device registers itself.** When you choose Open source plugins, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's API with your key. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
+**1. Your device registers itself.** When you choose Open source plugins, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's authenticated dashboard connection. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
 
 **2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it's the `post_llm_call`, `on_session_end` and `on_human_input_request` hooks ([`hermes/__init__.py`](hermes/__init__.py)).
 
@@ -63,13 +63,13 @@ openclaw plugins enable clawy-notifications
 hermes plugins install linuz90/clawy-notifications#hermes --enable
 ```
 
-Then restart Hermes. Its routes only mount at startup. To pin a reviewed commit, add `--ref <40-character-sha>`.
+Install it in every profile selected in Clawy, using `hermes -p <profile> plugins install … --enable` for named profiles. Restart Hermes after installation to load its observers and routes; current dashboards can hot-mount the routes, while the legacy API listener mounts only at startup. To pin a reviewed commit, add `--ref <40-character-sha>`.
 
 ### Then, in Clawy
 
 Open Settings › Notifications › Delivery and choose Open source plugins. Clawy finds the plugin and registers this device itself, so you never copy a key. Send Test passes only if this device opened the alert.
 
-If the plugin stops working, Clawy says so on the Topics list. It never moves you back to our relay on its own.
+If the plugin stops working, Clawy says so on its chat list. It never moves you back to our relay on its own.
 
 ## What's here
 

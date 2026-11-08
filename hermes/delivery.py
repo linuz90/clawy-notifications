@@ -47,14 +47,16 @@ def registration(value):
 
 
 class Devices:
-    def __init__(self, home):
+    def __init__(self, home, sequence_home=None):
         self.file = Path(home) / "clawy-notifications.json"
-        self.sequence = Path(home) / "clawy-notifications.sequence"
+        # One recipient is registered in several profiles. Their sequences must never collide.
+        self.sequence = Path(sequence_home or home) / "clawy-notifications.sequence"
+        self.health = Path(home) / "clawy-notifications.deliveries"
 
     @contextlib.contextmanager
-    def locked(self):
+    def locked(self, file=None):
         # CLI registration and the gateway's worker are separate processes.
-        fd = os.open(str(self.file) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = os.open(str(file or self.file) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
@@ -63,7 +65,7 @@ class Devices:
         """The number sealed into every message: a device opens each number once and never one far
         behind the newest, so nobody who keeps a sealed body can show it again. It runs on the clock
         so a lost file costs nothing, and on the file so a clock set back can't repeat a number."""
-        with self.locked():
+        with self.locked(self.sequence.parent / "clawy-notifications.json"):
             try:
                 last = int(self.sequence.read_text(encoding="ascii"))
             except (OSError, ValueError):
@@ -90,11 +92,50 @@ class Devices:
         with self.locked():
             return [registration(item) for item in self._read()]
 
+    def _deliveries(self):
+        try:
+            value = json.loads(self.health.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def deliveries(self):
+        # Dashboard sibling-profile routes run in a plugin host, apart from the turn's worker.
+        with self.locked():
+            ids = {d["id"] for d in self._read()}
+            return {key: value for key, value in self._deliveries().items() if key in ids}
+
+    def note_delivery(self, device, value):
+        with self.locked():
+            records = self._read()
+            if device not in records:
+                return  # A late answer belongs to a removed or replaced registration.
+            ids = {d["id"] for d in records}
+            values = {key: item for key, item in self._deliveries().items() if key in ids}
+            if values.get(device["id"], {}).get("seq", 0) >= value["seq"]:
+                return
+            values[device["id"]] = value
+            self._save_health(values)
+
+    def _save_health(self, values):
+        fd, temp = tempfile.mkstemp(prefix=".clawy-", dir=self.health.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                json.dump(values, out, separators=(",", ":"))
+            os.replace(temp, self.health)
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
+
     def change(self, device=None, remove=None):
         with self.locked():
             records = self._read()
             if device is not None:
                 device = registration(device)
+                if device not in records:
+                    health = self._deliveries()
+                    if health.pop(device["id"], None) is not None:
+                        self._save_health(health)
                 records = [d for d in records if d["id"] != device["id"]] + [device]
             if remove is not None:
                 # A late 410 must not erase a freshly re-registered device with the same id.
@@ -120,9 +161,6 @@ class Delivery:
     def __init__(self, devices):
         self.devices = devices
         self.pending = queue.Queue(maxsize=64)
-        # The last alert sent to each device: enough for its app to tell a working route from a
-        # broken one. Silent pushes don't count, as iOS may drop them as it likes.
-        self.deliveries = {}
         self.stopping = threading.Event()
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         self.worker = threading.Thread(target=self._work, name="clawy-push", daemon=True)
@@ -157,9 +195,14 @@ class Delivery:
         # Best effort only: no durable outbox, and unload never waits on the network.
         self.stopping.set()
 
+    @property
+    def deliveries(self):
+        # Only the latest alert counts; iOS may drop silent refreshes freely.
+        return self.devices.deliveries()
+
     def note(self, device, alert, seq, code):
         if alert["kind"] != "refresh":
-            self.deliveries[device["id"]] = {"seq": seq, "status": code, "at": int(time.time() * 1000)}
+            self.devices.note_delivery(device, {"seq": seq, "status": code, "at": int(time.time() * 1000)})
 
     def send(self, device, alert):
         seq = self.devices.next_seq()
@@ -190,6 +233,6 @@ class Delivery:
                 LOG.warning("Clawy forwarder rejected malformed push (%d)", code)
             elif code == 502 and attempt == 0:
                 continue
-            elif code != 200:
+            elif code not in (200, 202):
                 LOG.warning("Clawy forwarder dropped push (%d)", code)
             return code  # 429 is dropped; no retry, so no Retry-After wait is needed.

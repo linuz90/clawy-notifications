@@ -1,5 +1,5 @@
 name: clawy-notifications
-version: 0.2.0
+version: 0.3.0
 description: Device-sealed notifications for Clawy, with no plaintext sent to the forwarder.
 manifest_version: 2
 api_version: 1

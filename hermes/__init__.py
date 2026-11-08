@@ -9,12 +9,12 @@ import threading
 from .delivery import Delivery, Devices
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 
-def reply_kind(session):
-    if session.startswith(("ios-native-", "dashboard:")):
+def reply_kind(session, platform=""):
+    if platform == "clawy" or session.startswith("ios-native-"):
         return "reply"
     if (session == "main" or session.endswith(":heartbeat")
             or session.startswith(("cron:", "subagent:", "cron_"))):
@@ -43,16 +43,16 @@ class Notifications:
                  "sessionKey": f"agent:{self.profile}:{session}", **fields}
         self.delivery.submit(alert)
 
-    def capture(self, session_id="", turn_id=None, assistant_response="", **_):
+    def capture(self, session_id="", turn_id=None, assistant_response="", platform="", **_):
         if (isinstance(assistant_response, str) and isinstance(session_id, str)
-                and reply_kind(session_id) == "reply"):
+                and reply_kind(session_id, platform) == "reply"):
             with self.lock:
                 # Keep only text needed by the fixed-size record, never history or prompts.
                 self.replies[(session_id, turn_id)] = assistant_response[:2048]
                 while len(self.replies) > 128:
                     self.replies.pop(next(iter(self.replies)))
 
-    def ended(self, session_id="", turn_id=None, completed=False, failed=False, interrupted=False, **_):
+    def ended(self, session_id="", turn_id=None, completed=False, failed=False, interrupted=False, platform="", **_):
         with self.lock:
             body = self.replies.pop((session_id, turn_id), None)
         if not isinstance(session_id, str) or not session_id or interrupted or not (completed or failed):
@@ -62,7 +62,7 @@ class Notifications:
             if failed:
                 self.route("task-failed", session_id, title="Scheduled task failed", jobId=cron.job_id)
             return
-        kind = reply_kind(session_id)
+        kind = reply_kind(session_id, platform)
         if kind:
             fields = {"title": "New reply"} if kind == "reply" else {}
             if kind == "reply" and body:
@@ -100,9 +100,10 @@ class Notifications:
 
         async def status(request):
             devices = await asyncio.to_thread(self.devices.all)
+            deliveries = await asyncio.to_thread(lambda: self.delivery.deliveries)
             return web.json_response({"version": VERSION, "protocol": PROTOCOL, "devices": [
                 {"id": d["id"], "name": d["name"], "text": d["text"],
-                 "delivery": self.delivery.deliveries.get(d["id"])} for d in devices]})
+                 "delivery": deliveries.get(d["id"])} for d in devices]})
 
         async def add(request):
             if request.content_length is not None and request.content_length > 8192:
@@ -157,10 +158,12 @@ class Notifications:
 
 
 def register(ctx):
-    from hermes_constants import get_hermes_home
+    from hermes_constants import get_hermes_home, get_default_hermes_root
 
-    devices = Devices(get_hermes_home())
-    notifications = Notifications(ctx, devices)
+    home = get_hermes_home()
+    devices = Devices(home, sequence_home=get_default_hermes_root(home=home))
+    global _notifications
+    notifications = _notifications = Notifications(ctx, devices)
     ctx.register_hook("post_llm_call", notifications.capture)
     ctx.register_hook("on_session_end", notifications.ended)
     ctx.register_hook("on_human_input_request", notifications.human)

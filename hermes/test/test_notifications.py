@@ -114,7 +114,13 @@ class RoutingTests(unittest.TestCase):
             observer.ended(session_id="telegram:123", completed=True)
             self.assertEqual(submit.call_args.args[0]["kind"], "refresh")
             observer.ended(session_id="dashboard:test", completed=True)
+            self.assertEqual(submit.call_args.args[0]["kind"], "refresh")
+            observer.capture(session_id="20261108_server", turn_id="t2", assistant_response="Dashboard reply", platform="clawy")
+            observer.ended(session_id="20261108_server", turn_id="t2", completed=True, platform="clawy")
             self.assertEqual(submit.call_args.args[0]["kind"], "reply")
+            self.assertEqual(submit.call_args.args[0]["body"], "Dashboard reply")
+            observer.ended(session_id="20261108_other", completed=True, platform="telegram")
+            self.assertEqual(submit.call_args.args[0]["kind"], "refresh")
             observer.ended(session_id="ios-native-test", failed=True)
             self.assertEqual(submit.call_args.args[0]["kind"], "reply")
             observer.human(kind="approval", request_id="a", session_id="other", prompt="echo safe")
@@ -161,6 +167,35 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(observer.devices.file.stat().st_mode & 0o777, 0o600)
                 observer.close()
                 self.assertEqual((await client.post(endpoint, json=device, headers=headers)).status, 503)
+
+
+class DashboardRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dashboard_routes_share_live_observer_and_bound_input(self):
+        try:
+            from fastapi import FastAPI
+            import httpx
+        except ImportError:
+            self.skipTest("Dashboard route tests need Hermes's FastAPI and httpx")
+        spec = importlib.util.spec_from_file_location("clawy_dashboard_test", ROOT / "dashboard/plugin_api.py")
+        api = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(api)
+        with tempfile.TemporaryDirectory() as home, patch.object(plugin, "Delivery"):
+            service = plugin.Notifications(SimpleNamespace(profile_name="research"), Devices(home))
+            with patch.object(api, "observer", return_value=service):
+                app = FastAPI()
+                app.include_router(api.router)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                    _, device = recipient()
+                    self.assertEqual((await client.post("/devices", json=device)).status_code, 200)
+                    service.delivery.deliveries = {device["id"]: {"seq": 42, "status": 200, "at": 123}}
+                    result = (await client.get("/status")).json()
+                    self.assertEqual(result["devices"][0]["delivery"]["seq"], 42)
+                    self.assertEqual((await client.post("/devices", content=b"x" * 8193)).status_code, 413)
+                    self.assertEqual((await client.post("/devices", json=[])).status_code, 400)
+                    self.assertEqual((await client.post("/devices", json={"v": 99})).status_code, 400)
+                    self.assertEqual((await client.delete("/devices/" + device["id"])).status_code, 200)
+                    self.assertEqual(service.devices.all(), [])
+            service.close()
 
 
 class DeliveryTests(unittest.TestCase):
@@ -231,6 +266,17 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(Devices(self.temp.name).next_seq(), first + 10_000_002)
         self.assertEqual(self.devices.sequence.stat().st_mode & 0o777, 0o600)
 
+    def test_profiles_share_one_replay_sequence_even_in_the_same_millisecond(self):
+        from concurrent.futures import ThreadPoolExecutor
+        home = Path(self.temp.name)
+        (home / "a").mkdir()
+        (home / "b").mkdir()
+        profiles = [Devices(home / "a", sequence_home=home), Devices(home / "b", sequence_home=home)]
+        with patch("time.time", return_value=1234), ThreadPoolExecutor(2) as pool:
+            values = list(pool.map(lambda i: profiles[i % 2].next_seq(), range(20)))
+        self.assertEqual(len(set(values)), 20)
+        self.assertEqual(sorted(values), list(range(1234000, 1234020)))
+
     def test_replacement_is_private_and_late_failure_preserves_new_device(self):
         newer = dict(self.device, token="new-token", text=False)
         self.devices.change(device=newer)
@@ -245,6 +291,21 @@ class DeliveryTests(unittest.TestCase):
                     dict(newer, text="false"), dict(newer, token="bad\nheader")):
             with self.assertRaises(ValueError):
                 registration(bad)
+
+    def test_delivery_health_is_shared_across_workers_and_ignores_late_answers(self):
+        first = {"seq": 100, "status": 200, "at": 1}
+        self.devices.note_delivery(self.device, first)
+        sibling = Devices(self.temp.name)
+        self.assertEqual(sibling.deliveries()[self.device["id"]], first)
+        sibling.note_delivery(self.device, {"seq": 99, "status": 502, "at": 2})
+        self.assertEqual(self.devices.deliveries()[self.device["id"]], first)
+        self.assertEqual(self.devices.health.stat().st_mode & 0o777, 0o600)
+        newer = dict(self.device, token="replacement")
+        self.devices.change(device=newer)
+        sibling.note_delivery(self.device, {"seq": 101, "status": 502, "at": 3})
+        self.assertEqual(self.devices.deliveries(), {})
+        self.devices.change(remove=newer)
+        self.assertEqual(sibling.deliveries(), {})
 
     def test_hook_submission_does_not_wait_for_network(self):
         entered, release = threading.Event(), threading.Event()

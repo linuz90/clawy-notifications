@@ -60,7 +60,7 @@ A `refresh` only counts as a silent push, and anything else only as an alert. A 
 
 It is encrypted with Web Push's `aes128gcm` (RFC 8291 over RFC 8188): a fresh ephemeral P-256 key and 16-byte salt per message, one record, record size 4096, the 65-byte ephemeral public key as the key id.
 
-**Replay:** `seq` stops anyone who kept a sealed body, or who holds Apple's key, from showing it again. It's an integer that only ever goes up across everything a plugin sends: milliseconds since 1970, or the last number plus one if that's higher, kept on disk so a clock set back can't repeat a number. A device remembers the highest `seq` it has opened and every number within ten minutes behind it, starting when it makes its key. It opens a number once, and treats one it has seen, one further behind than that, a message with no `seq`, or a key with no such record, as a push that doesn't open. Ten minutes leaves room for pushes arriving out of order; nothing compares `seq` with the device's clock, so a gateway's wrong clock costs nothing. A retry sends the same sealed body, and the same `seq`.
+**Replay:** `seq` stops anyone who kept a sealed body, or who holds Apple's key, from showing it again. It's an integer that only ever goes up across everything a plugin sends: milliseconds since 1970, or the last number plus one if that's higher, kept on disk so a clock set back can't repeat a number. Hermes profiles share one sequence file and lock at the Hermes root because the same recipient can be registered in several profiles. A device remembers the highest `seq` it has opened and every number within ten minutes behind it, starting when it makes its key. It opens a number once, and treats one it has seen, one further behind than that, a message with no `seq`, or a key with no such record, as a push that doesn't open. Ten minutes leaves room for pushes arriving out of order; nothing compares `seq` with the device's clock, so a gateway's wrong clock costs nothing. A retry sends the same sealed body, and the same `seq`.
 
 **Padding:** every message's padded plaintext, the JSON plus the `0x02` delimiter plus zeros, is exactly **2048 bytes**. So every sealed body is 2150 bytes, 2867 in base64url, whatever it says. Shorten `body` until the JSON fits in 2047 bytes, cutting on a character boundary, ending with `…`, and setting `truncated`.
 
@@ -81,6 +81,7 @@ The forwarder accepts a sealed body of exactly 2867 base64url characters and not
 | Answer | Meaning | Plugin does |
 | --- | --- | --- |
 | 200 | Apple accepted it | Nothing |
+| 202 | Taken and not sent: the device muted this gateway, as it isn't the one in use there | Nothing; the device reads no fault into it |
 | 401, 410 | Bad token, or the device is gone | Removes the device |
 | 404 | No such route on this forwarder | Keeps the device: it says nothing about it |
 | 413, 400 | Malformed | Logs it, a bug |
@@ -89,7 +90,7 @@ The forwarder accepts a sealed body of exactly 2867 base64url characters and not
 
 ## Health
 
-A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes `GET /v1/clawy/status`) with:
+A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes dashboard `GET /api/plugins/clawy-notifications/status?profile=<profile>`, legacy API server `GET /v1/clawy/status`) with:
 
 ```json
 {
@@ -103,7 +104,7 @@ A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes 
 }
 ```
 
-`protocol` is the version of this document. A device tells someone to update a plugin older than it needs. `listening` is what the plugin has signed in to, where it signs in to anything: left out, it has nothing that can drop. `delivery` is the last alert (never a `refresh`, which iOS may drop as it likes) sent to that device: its `seq`, the forwarder's answer or 0 for no answer, and when. The device compares that `seq` with the newest alert it has shown to tell one that never arrived. It's kept in memory, so a restart forgets it.
+`protocol` is the version of this document. A device tells someone to update a plugin older than it needs. `listening` is what the plugin has signed in to, where it signs in to anything: left out, it has nothing that can drop. `delivery` is the last alert (never a `refresh`, which iOS may drop as it likes) sent to that device: its `seq`, the forwarder's answer or 0 for no answer, and when. The device compares that `seq` with the newest alert it has shown to tell one that never arrived. OpenClaw keeps it in memory, so a restart forgets it. Hermes keeps only this latest delivery metadata per device in its locked private files, shared between the turn worker and the dashboard plugin host.
 
 The device says when any of this looks wrong, and it never moves to another route by itself: someone who chose a plugin chose not to trust the relay.
 
@@ -111,7 +112,7 @@ The device says when any of this looks wrong, and it never moves to another rout
 
 A plugin applies these, where `rest` is the session key after `agent:<agent>:`:
 
-- A reply in an app topic (`rest` starts `ios-native-` or `dashboard:`) is an alert.
+- On OpenClaw, a reply in an app topic (`rest` starts `ios-native-` or `dashboard:`) is an alert. On Hermes, the stored session source must be `clawy` (the hooks expose it as `platform`); legacy `ios-native-` ids also alert. Hermes's `dashboard:` prefix alone no longer means a Clawy chat.
 - A reply in `main`, or where `rest` ends `:heartbeat` or starts `cron:` or `subagent:`, sends nothing.
 - A reply anywhere else is a `refresh`, so a device following that session can read it in the background.
 - An approval or a question alerts from any session. An answered one sends nothing.
