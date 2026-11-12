@@ -2,19 +2,22 @@
 // gateway's user can read. Nothing here can open a sealed message.
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { parseActivities,                     } from "./activity.js";
 
-                      
-       
-             
-                
-                                             
-                    
-                
-                 
-               
-                                                                  
-                 
-  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 const base64url = /^[A-Za-z0-9_-]+$/u;
 
@@ -31,6 +34,8 @@ export const canRegister = (scopes           = []) =>
 export function parseDevice(input     )                {
   if (!input || typeof input !== "object") return null;
   const { id, name, forwarder, token, p256dh, auth, text } = input;
+  const activities = parseActivities(input.activities);
+  if (activities === false) return null;
   if (typeof id !== "string" || !base64url.test(id) || typeof token !== "string" || !token) return null;
   if (typeof p256dh !== "string" || !base64url.test(p256dh) || Buffer.from(p256dh, "base64url").length !== 65) return null;
   if (typeof auth !== "string" || !base64url.test(auth) || Buffer.from(auth, "base64url").length !== 16) return null;
@@ -41,7 +46,7 @@ export function parseDevice(input     )                {
     return null;
   }
   if (url.origin !== forwarderOrigin() || url.pathname !== `/v1/forward/${id}` || url.search || url.hash) return null;
-  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false };
+  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false, ...(activities?.length ? { activities } : {}) };
 }
 
 export class DeviceFile {
@@ -53,7 +58,8 @@ export class DeviceFile {
 
   list()           {
     try {
-      return JSON.parse(readFileSync(this.path, "utf8"))            ;
+      const values = JSON.parse(readFileSync(this.path, "utf8"));
+      return Array.isArray(values) ? values.map(parseDevice).filter((device)                   => device !== null) : [];
     } catch {
       return [];
     }

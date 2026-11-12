@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canRegister, forwarderOrigin, parseDevice, Sequence } from "../devices.ts";
-import { approvalMessage, failedJobMessage, questionMessage, replyMessage } from "../route.ts";
+import { approvalMessage, automationPostMessage, failedJobMessage, questionMessage, replyMessage } from "../route.ts";
 import { fit, PADDED_LENGTH, seal } from "../seal.ts";
 
 // An independent opener, written from RFC 8291, so the test doesn't check seal.ts against itself.
@@ -82,6 +82,27 @@ test("a run with nothing to say sends nothing", () => {
   assert.equal(replyMessage(end("agent:juno:ios-native-1", { yielded: true })), null);
   assert.equal(replyMessage(end("agent:juno:ios-native-1", { terminalReply: { disposition: "silent" } })), null);
   assert.equal(replyMessage(end("agent:juno:ios-native-1", { phase: "error" })), null);
+});
+
+test("an automation's post into a chat routes like a reply, and other transcript writes send nothing", () => {
+  // As OpenClaw's commitBackgroundResultToSession writes it and publishTranscriptTurnUpdate projects it.
+  const post = (sessionKey: string, message: Record<string, any> = {}) => ({
+    target: { agentId: sessionKey.split(":")[1], sessionId: "s1", sessionKey },
+    messageId: "m1",
+    message: { role: "assistant", content: [{ type: "text", text: "Price dropped to €1,890" }], openclawAutomation: { kind: "cron", jobId: "j1" }, ...message },
+  });
+  assert.deepEqual(automationPostMessage(post("agent:juno:ios-native-1")), { v: 2, kind: "reply", body: "Price dropped to €1,890", sessionKey: "agent:juno:ios-native-1", agentId: "juno" });
+  assert.equal(automationPostMessage(post("agent:juno:dashboard:ce93"))?.kind, "reply");
+  assert.deepEqual(automationPostMessage(post("agent:main:telegram:direct:1:thread:1:7")), { v: 2, kind: "refresh", sessionKey: "agent:main:telegram:direct:1:thread:1:7", agentId: "main" });
+  for (const key of ["agent:main:main", "agent:main:cron:j1", "agent:main:subagent:x", "main"]) {
+    assert.equal(automationPostMessage(post(key)), null, key);
+  }
+  // A post with no text (a widget alone) still alerts; the device fills it in from the chat.
+  assert.equal(automationPostMessage(post("agent:juno:ios-native-1", { content: [{ type: "image" }] }))?.body, undefined);
+  // An ordinary reply, the person's own message, or an update with no message: the run's end covers those.
+  assert.equal(automationPostMessage(post("agent:juno:ios-native-1", { openclawAutomation: undefined })), null);
+  assert.equal(automationPostMessage(post("agent:juno:ios-native-1", { role: "user" })), null);
+  assert.equal(automationPostMessage({ target: { sessionKey: "agent:juno:ios-native-1" } }), null);
 });
 
 test("approvals and questions alert from any session, answered ones send nothing", () => {

@@ -30,13 +30,31 @@ export function replyMessage(event: { sessionKey?: string; agentId?: string; dat
   if (!sessionKey || data?.phase !== "end" || data.aborted === true || data.yielded === true) return null;
   const reply = data.terminalReply;
   if (reply?.disposition !== "visible") return null;
+  return routeReply(sessionKey, event.agentId, reply.text);
+}
+
+/** A scheduled task's result committed into a chat, from `onSessionTranscriptUpdate`: an assistant
+ * message carrying `openclawAutomation`. The job's run ends in its own `cron:` session, which
+ * `replyMessage` skips, so this is the only word that the chat has something new. */
+export function automationPostMessage(update: { target?: { sessionKey?: string; agentId?: string }; message?: any }): Message | null {
+  const message = update.message;
+  if (message?.role !== "assistant" || !message.openclawAutomation || !update.target?.sessionKey) return null;
+  const text = Array.isArray(message.content)
+    ? message.content.filter((block: any) => block?.type === "text" && typeof block.text === "string").map((block: any) => block.text).join("\n").trim()
+    : typeof message.content === "string" ? message.content.trim() : "";
+  return routeReply(update.target.sessionKey, update.target.agentId, text || undefined);
+}
+
+/** An app chat alerts with the text, a session someone may follow gets a silent refresh, and the
+ * rest send nothing: the relay's rules for a reply. */
+function routeReply(sessionKey: string, agentId: string | undefined, text: string | undefined): Message | null {
   const parts = sessionKey.split(":");
   if (parts[0] !== "agent" || parts.length < 3) return null;
-  const agentId = event.agentId ?? parts[1];
+  const agent = agentId ?? parts[1];
   const rest = parts.slice(2).join(":");
-  if (APP_TOPIC.test(rest)) return { v: 2, kind: "reply", body: reply.text, sessionKey, agentId };
+  if (APP_TOPIC.test(rest)) return { v: 2, kind: "reply", body: text, sessionKey, agentId: agent };
   if (NEVER_FOLLOWED.test(rest)) return null;
-  return { v: 2, kind: "refresh", sessionKey, agentId };
+  return { v: 2, kind: "refresh", sessionKey, agentId: agent };
 }
 
 /** A plugin approval as the app shows it, title and all: Allow answers for the whole of it. */

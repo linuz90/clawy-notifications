@@ -1,6 +1,6 @@
 {
   "name": "clawy-notifications",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Sealed push notifications for Clawy: routes alerts on your own gateway and encrypts them to your device.",
   "license": "MIT",
   "type": "module",

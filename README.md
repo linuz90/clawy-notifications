@@ -36,9 +36,9 @@ More on what it does and doesn't guard against: [`SECURITY.md`](SECURITY.md).
 
 Four steps, each in a file you can read.
 
-**1. Your device registers itself.** When you choose Open source plugins, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's authenticated dashboard connection. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
+**1. Your device registers itself.** When you turn on the notification plugin, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's authenticated dashboard connection. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
 
-**2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it uses reply and human-input hooks ([`hermes/__init__.py`](hermes/__init__.py)). Its send-only cron platform also writes an automation result back into the Clawy chat that scheduled it, then sends its sealed reply alert ([Hermes details](hermes/README.md#cron-results-in-a-clawy-chat)).
+**2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, an automation's post into a chat, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it uses reply and human-input hooks ([`hermes/__init__.py`](hermes/__init__.py)). Its send-only cron platform also writes an automation result back into the Clawy chat that scheduled it, then sends its sealed reply alert ([Hermes details](hermes/README.md#cron-results-in-a-clawy-chat)).
 
 **3. It decides, then seals.** The same rules our relay uses pick an alert, a silent refresh or nothing ([`openclaw/route.ts`](openclaw/route.ts), and `reply_kind` in [`hermes/__init__.py`](hermes/__init__.py)). It numbers each message so it can't be shown twice, pads it to 2048 bytes, and encrypts it to your device's key with Web Push's standard `aes128gcm` (RFC 8291), using only Node's or Python's own crypto ([`openclaw/seal.ts`](openclaw/seal.ts), [`hermes/seal.py`](hermes/seal.py)).
 
@@ -51,11 +51,11 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.2.0 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.3.0 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 
-`--force` is OpenClaw's confirmation for anything outside ClawHub's review, and `--accept-capabilities` accepts what the plugin declares. Both commands are needed: install can leave the plugin disabled. No restart. If you turned on owner access in Clawy, Settings › Notifications › Delivery can do this for you.
+`--force` is OpenClaw's confirmation for anything outside ClawHub's review, and `--accept-capabilities` accepts what the plugin declares. Both commands are needed: install can leave the plugin disabled. No restart. If you turned on owner access in Clawy, Settings › Notifications › OpenClaw Notification Plugin can do this for you.
 
 ### Hermes Agent
 
@@ -67,7 +67,7 @@ Install it in every profile selected in Clawy, using `hermes -p <profile> plugin
 
 ### Then, in Clawy
 
-Open Settings › Notifications › Delivery and choose Open source plugins. Clawy finds the plugin and registers this device itself, so you never copy a key. Send Test passes only if this device opened the alert.
+Open Settings › Notifications › OpenClaw Notification Plugin (Hermes Notification Plugin on Hermes) and turn on Use the Plugin. Clawy finds the plugin and registers this device itself, so you never copy a key. Send Test passes only if this device opened the alert.
 
 If the plugin stops working, Clawy says so on its chat list. It never moves you back to our relay on its own.
 
@@ -98,4 +98,4 @@ Tested on OpenClaw `2026.10.7` and `2026.11.1`, and Hermes `v0.22.7` and `v0.23.
 
 MIT. Reporting a security problem: [`SECURITY.md`](SECURITY.md).
 
-Optional Live Activities are available in Hermes plugin 0.4.0 (`liveActivities: 2`). They forward generic run phase and wait counts for up to four followed chats per device, separately from sealed alerts; see [the protocol](PROTOCOL.md#live-activities-version-2). Conversation content stays on the sealed route.
+Optional Live Activities need OpenClaw plugin 0.3.0 or Hermes plugin 0.4.0 (`liveActivities: 2`). They forward generic run phase and wait counts for up to four followed chats per device, separately from sealed alerts; see [the protocol](PROTOCOL.md#live-activities-version-2). Conversation content stays on the sealed route.

@@ -48,7 +48,11 @@ try {
   // Not a promise of OpenClaw's: where the reply text comes from. Fails loudly if it's renamed.
   const types = join(root, "runtime/node_modules/openclaw/dist");
   const declared = readdirSync(types, { recursive: true }).filter((file) => String(file).endsWith(".d.ts"));
-  assert.ok(declared.some((file) => readFileSync(join(types, String(file)), "utf8").includes("terminalReply")), "terminalReply left the SDK's types");
+  const declares = (word) => declared.some((file) => readFileSync(join(types, String(file)), "utf8").includes(word));
+  assert.ok(declares("terminalReply"), "terminalReply left the SDK's types");
+  // An automation's post: the transcript listener the plugin hears it on, and the field that marks it.
+  assert.ok(declares("onSessionTranscriptUpdate"), "onSessionTranscriptUpdate left the SDK's types");
+  assert.ok(readdirSync(types).some((file) => file.endsWith(".mjs") && readFileSync(join(types, file), "utf8").includes("openclawAutomation")), "automation posts no longer carry openclawAutomation");
 
   openclaw("onboard", "--non-interactive", "--accept-risk", "--mode", "local", "--auth-choice", "skip", "--gateway-bind", "loopback", "--gateway-port", String(port),
     "--gateway-auth", "password", "--gateway-password", password, "--secret-input-mode", "ref", "--tailscale", "off", "--skip-channels", "--skip-daemon",
@@ -72,6 +76,7 @@ try {
     await new Promise((done) => setTimeout(done, 1000));
   }
   assert.equal(status.protocol, 2);
+  assert.equal(status.liveActivities, 2);
   console.log(`plugin ${status.version} installed from ${process.env.CLAWY_INSTALL_SOURCE ?? "this checkout"}, approvals and questions signed in with a password`);
 
   await call("clawy.notifications.register", forwarder.device);

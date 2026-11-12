@@ -6,7 +6,7 @@ import { stripTypeScriptTypes } from "node:module";
 
 const here = new URL("./", import.meta.url);
 mkdirSync(new URL("dist", here), { recursive: true });
-for (const name of ["index", "route", "seal", "devices"]) {
-  const js = stripTypeScriptTypes(readFileSync(new URL(`${name}.ts`, here), "utf8")).replace(/from "\.\/(\w+)\.ts"/gu, 'from "./$1.js"');
+for (const name of ["index", "route", "seal", "devices", "activity"]) {
+  const js = stripTypeScriptTypes(readFileSync(new URL(`${name}.ts`, here), "utf8")).replace(/from "\.\/(\w+)\.ts"/gu, 'from "./$1.js"').replace(/[ \t]+$/gmu, "");
   writeFileSync(new URL(`dist/${name}.js`, here), js);
 }

@@ -1,15 +1,16 @@
 // Clawy notifications for OpenClaw. It watches this gateway for what needs a person (replies,
-// approvals, questions, failed scheduled tasks), seals each to the devices registered here, and
-// posts the ciphertext to Clawy's forwarder, which holds Apple's push key and nothing that opens
-// it. It reads no conversation history and needs no `allowConversationAccess`. See README.md.
+// automation posts, approvals, questions, failed scheduled tasks), seals each to the devices
+// registered here, and posts the ciphertext to Clawy's forwarder, which holds Apple's push key and
+// nothing that opens it. It reads no conversation history and needs no `allowConversationAccess`. See README.md.
 import { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { join } from "node:path";
 import { canRegister, DeviceFile, parseDevice, Sequence, type Device } from "./devices.ts";
-import { approvalMessage, failedJobMessage, questionMessage, replyMessage, type Message } from "./route.ts";
+import { approvalMessage, automationPostMessage, failedJobMessage, questionMessage, replyMessage, type Message } from "./route.ts";
 import { fit, seal } from "./seal.ts";
+import { Activities } from "./activity.ts";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 /** Bumped whenever a device needs something new from this plugin. PROTOCOL.md. */
 const PROTOCOL = 2;
 
@@ -26,6 +27,8 @@ export default definePluginEntry({
     const devices = new DeviceFile(join(state, "devices.json"));
     const sequence = new Sequence(join(state, "sequence"));
     const deliveries = new Map<string, Delivery>();
+    const activities = new Activities(() => sequence.next());
+    for (const device of devices.list()) activities.register(device);
     // Whether each client is signed in: one that isn't misses its alerts with nothing else to show for it.
     const listening = { approvals: false, questions: false };
 
@@ -64,9 +67,10 @@ export default definePluginEntry({
       return response.status;
     }
 
-    function send(message: Message | null) {
+    function send(message: Message | null, handled = new Set<string>()) {
       if (!message) return;
       for (const device of devices.list()) {
+        if (handled.has(device.id)) continue;
         deliver(device, message).catch((error) => log.warn(`clawy-notifications: send failed: ${error}`));
       }
     }
@@ -76,6 +80,7 @@ export default definePluginEntry({
       respond(true, {
         version: VERSION,
         protocol: PROTOCOL,
+        liveActivities: 2,
         listening,
         devices: devices.list().map(({ id, name, text }) => ({ id, name, text, delivery: deliveries.get(id) })),
       });
@@ -86,11 +91,13 @@ export default definePluginEntry({
       const device = parseDevice(params);
       if (!device) return respond(false, undefined, { code: "INVALID_REQUEST", message: "invalid device" });
       devices.add(device);
+      activities.register(device);
       respond(true, { ok: true });
     }, { scope: "operator.write" });
 
     api.registerGatewayMethod("clawy.notifications.unregister", ({ params, respond, client }) => {
       if (!canRegister(client?.connect?.scopes)) return respond(false, undefined, { code: "FORBIDDEN", message: "needs operator.approvals and operator.questions" });
+      activities.remove(String(params?.id));
       respond(true, { removed: devices.remove(String(params?.id)) });
     }, { scope: "operator.write" });
 
@@ -104,14 +111,26 @@ export default definePluginEntry({
     }, { scope: "operator.write" });
 
     api.on("cron_changed", (event) => send(failedJobMessage(event)));
+    // A helper's start and end, named by the chat that spawned it: that chat's row keeps working
+    // through a turn that ends while its helpers do, until their results are announced.
+    api.on("subagent_progress", (event, ctx) => activities.helper(ctx?.requesterSessionKey, event?.childSessionKey, event?.phase === "started"));
+    api.on("subagent_ended", (event, ctx) => activities.helper(ctx?.requesterSessionKey, event?.targetSessionKey, false));
 
     const seen = new Set<string>();
+    const posted = new Set<string>();
     let stopAll: Array<() => void> = [];
 
     api.registerService({
       id: "clawy-notifications",
       async start(ctx) {
         const offEvents = api.runtime.events.onAgentEvent((event) => {
+          const { sessionKey, runId, data } = event;
+          if (sessionKey && event.stream === "lifecycle") {
+            if (data?.phase === "start") activities.start(sessionKey, runId, typeof data.startedAt === "number" ? data.startedAt / 1000 : undefined);
+            else if (data?.phase !== "end" && data?.phase !== "error") activities.resume(sessionKey, runId);
+            if (data?.phase === "end" || data?.phase === "error") activities.end(sessionKey, runId, data.aborted === true ? "stopped" : data.phase === "error" || data.error ? "failed" : "replied", data.yielded === true);
+          }
+          if (sessionKey && (event.stream === "subagent" || (event.stream === "tool" && data?.name === "sessions_spawn"))) activities.progress(sessionKey, runId);
           if (event.stream !== "lifecycle" || event.data?.phase !== "end") return;
           // A run's end can be republished: one push per run.
           if (seen.has(event.runId)) return;
@@ -120,12 +139,33 @@ export default definePluginEntry({
           send(replyMessage(event));
         });
 
+        // An automation's post lands in its chat by a transcript commit, not a run of the chat's own.
+        // A retried commit can publish the same message again: one push per message.
+        const offPosts = api.runtime.events.onSessionTranscriptUpdate((update) => {
+          const message = automationPostMessage(update);
+          if (!message) return;
+          const id = update.messageId;
+          if (id) {
+            if (posted.has(id)) return;
+            posted.add(id);
+            if (posted.size > 500) posted.delete(posted.values().next().value!);
+          }
+          send(message);
+        });
+
         // Approvals: the SDK's client for approval channels sees every approval with
         // `operator.approvals` alone.
         const approvals = await createOperatorApprovalsGatewayClient({
           config: ctx.config,
           clientDisplayName: "Clawy notifications",
-          onEvent: (frame) => send(approvalMessage(frame.event, frame.payload as Record<string, any>)),
+          onEvent: (frame) => {
+            const payload = frame.payload as Record<string, any>;
+            if (!frame.event.startsWith("exec.approval.") && !frame.event.startsWith("plugin.approval.")) return;
+            const resolved = frame.event.endsWith(".resolved");
+            void activities.human(payload.request?.sessionKey, `${frame.event.split(".")[0]}:${payload.id}`, resolved)
+              .then(handled => send(approvalMessage(frame.event, payload), handled))
+              .catch(() => send(approvalMessage(frame.event, payload)));
+          },
           onHelloOk: () => { listening.approvals = true; },
           onClose: () => { listening.approvals = false; },
         });
@@ -142,17 +182,24 @@ export default definePluginEntry({
           clientDisplayName: "Clawy notifications",
           mode: "backend",
           scopes: ["operator.questions"],
-          onEvent: (frame) => send(questionMessage(frame.event, frame.payload as Record<string, any>)),
+          onEvent: (frame) => {
+            if (frame.event !== "question.requested" && frame.event !== "question.resolved") return;
+            const payload = frame.payload as Record<string, any>;
+            void activities.human(payload.sessionKey, `question:${payload.id}`, frame.event === "question.resolved")
+              .then(handled => send(questionMessage(frame.event, payload), handled))
+              .catch(() => send(questionMessage(frame.event, payload)));
+          },
           onHelloOk: () => { listening.questions = true; },
           onClose: () => { listening.questions = false; },
         });
         questions.start();
 
-        stopAll = [offEvents, () => approvals.stop(), () => questions.stop()];
+        stopAll = [offEvents, offPosts, () => approvals.stop(), () => questions.stop()];
       },
       stop() {
         for (const stop of stopAll) stop();
         stopAll = [];
+        activities.close();
       },
     });
   },
