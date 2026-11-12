@@ -154,6 +154,8 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                 _, device = recipient()
                 self.assertEqual((await client.post(endpoint, json=device)).status, 401)
                 headers = {"Authorization": "Bearer test-profile-key"}
+                result = (await (await client.get("/v1/clawy/status", headers=headers)).json())
+                self.assertEqual(result["liveActivities"], 2)
                 self.assertEqual((await client.post(endpoint, json={"v": 9}, headers=headers)).status, 400)
                 self.assertEqual((await client.post(endpoint, data=b"x" * 8193, headers=headers)).status, 413)
                 raw = json.dumps(device).encode()
@@ -189,6 +191,8 @@ class DashboardRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.post("/devices", json=device)).status_code, 200)
                     service.delivery.deliveries = {device["id"]: {"seq": 42, "status": 200, "at": 123}}
                     result = (await client.get("/status")).json()
+                    self.assertEqual(result["liveActivities"], 2)
+                    self.assertEqual(result["version"], plugin.VERSION)
                     self.assertEqual(result["devices"][0]["delivery"]["seq"], 42)
                     self.assertEqual((await client.post("/devices", content=b"x" * 8193)).status_code, 413)
                     self.assertEqual((await client.post("/devices", json=[])).status_code, 400)

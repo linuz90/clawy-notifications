@@ -42,8 +42,13 @@ try {
 from gateway.platforms.api_server import APIServerAdapter as A
 assert hasattr(A, "_check_auth") and hasattr(A, "_expected_api_key")
 from hermes_cli.plugins import VALID_HOOKS as H
-assert {"post_llm_call", "on_session_end", "on_human_input_request"} <= set(H), H
+assert {"pre_llm_call", "post_llm_call", "on_session_end", "on_human_input_request", "on_human_input_resolved", "pre_tool_call"} <= set(H), H
 `], { cwd: source, env, stdio: "inherit" });
+
+  execFileSync(join(source, ".venv/bin/python"), [join(repo, "hermes/test/test_cron.py")], {
+    env: { ...env, CLAWY_HERMES_SOURCE: source }, stdio: "inherit",
+  });
+  console.log("cron routing, durable completion and push contracts passed");
 
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, ".env"), `API_SERVER_ENABLED=true\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=${port}\nAPI_SERVER_KEY=${key}\n`, { mode: 0o600 });
@@ -63,6 +68,7 @@ assert {"post_llm_call", "on_session_end", "on_human_input_request"} <= set(H), 
   assert.equal((await api("GET", "/v1/clawy/status", undefined, "wrong-key")).status, 401);
   const status = await (await api("GET", "/v1/clawy/status")).json();
   assert.equal(status.protocol, 2);
+  assert.equal(status.liveActivities, 2);
   console.log(`plugin ${status.version} installed from ${process.env.CLAWY_INSTALL_SOURCE ?? "this checkout"}, its routes refuse a wrong key`);
 
   assert.equal((await api("POST", "/v1/clawy/devices", forwarder.device)).status, 200);

@@ -7,9 +7,11 @@ import sys
 import threading
 
 from .delivery import Delivery, Devices
+from .activity import Activities
+from .cron import CronDelivery, adapter as cron_adapter
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 
@@ -23,10 +25,16 @@ def reply_kind(session, platform=""):
 
 
 class Notifications:
+    version = VERSION
+
     def __init__(self, ctx, devices):
         self.ctx = ctx
         self.devices = devices
         self.delivery = Delivery(devices)
+        self.activities = Activities(devices, self.delivery)
+        self.delivery.activity_handled = self.activities.handles
+        if devices is not None:
+            self.activities.sync()
         self.replies = {}
         self.lock = threading.Lock()
         self.profile = ctx.profile_name or "default"
@@ -34,6 +42,9 @@ class Notifications:
 
     def close(self):
         self.active = False
+        if hasattr(self, "cron"):
+            self.cron.close()
+        self.activities.close()
         self.delivery.close()
 
     def route(self, kind, session, **fields):
@@ -42,6 +53,12 @@ class Notifications:
         alert = {"v": 2, "kind": kind, "agentId": self.profile,
                  "sessionKey": f"agent:{self.profile}:{session}", **fields}
         self.delivery.submit(alert)
+
+    def started(self, session_id="", turn_id=None, **_):
+        self.activities.start(f"agent:{self.profile}:{session_id}", turn_id)
+
+    def resolved(self, request_id="", session_id="", **_):
+        self.activities.human(f"agent:{self.profile}:{session_id}", request_id, resolved=True)
 
     def capture(self, session_id="", turn_id=None, assistant_response="", platform="", **_):
         if (isinstance(assistant_response, str) and isinstance(session_id, str)
@@ -53,6 +70,8 @@ class Notifications:
                     self.replies.pop(next(iter(self.replies)))
 
     def ended(self, session_id="", turn_id=None, completed=False, failed=False, interrupted=False, platform="", **_):
+        self.activities.end(f"agent:{self.profile}:{session_id}", turn_id,
+                            "stopped" if interrupted else "failed" if failed else "replied")
         with self.lock:
             body = self.replies.pop((session_id, turn_id), None)
         if not isinstance(session_id, str) or not session_id or interrupted or not (completed or failed):
@@ -69,9 +88,13 @@ class Notifications:
                 fields["body"] = body
             self.route(kind, session_id, **fields)
 
-    def human(self, kind="", request_id="", session_id="", prompt="", **_):
+    def human(self, kind="", request_id="", session_id="", session_key="", prompt="", **_):
         if not request_id:
             return
+        # Hermes supplies the exact turn-bound routing key even when tool observability uses
+        # a newer compression segment. Keep normal sealed routing unchanged.
+        activity_session = session_key if isinstance(session_key, str) and session_key else session_id
+        self.activities.human(f"agent:{self.profile}:{activity_session}", request_id)
         if kind == "approval":
             self.route("approval", session_id, title="Approval needed", body=prompt,
                        approvalId="hermes:" + request_id)
@@ -101,7 +124,7 @@ class Notifications:
         async def status(request):
             devices = await asyncio.to_thread(self.devices.all)
             deliveries = await asyncio.to_thread(lambda: self.delivery.deliveries)
-            return web.json_response({"version": VERSION, "protocol": PROTOCOL, "devices": [
+            return web.json_response({"version": VERSION, "protocol": PROTOCOL, "liveActivities": 2, "devices": [
                 {"id": d["id"], "name": d["name"], "text": d["text"],
                  "delivery": deliveries.get(d["id"])} for d in devices]})
 
@@ -116,6 +139,7 @@ class Notifications:
             try:
                 value = json.loads(raw)
                 await asyncio.to_thread(self.devices.change, device=value)
+                await asyncio.to_thread(self.activities.sync)
             except (ValueError, TypeError, KeyError, UnicodeError):
                 return web.json_response({"error": "Invalid registration"}, status=400)
             except OSError:
@@ -127,6 +151,7 @@ class Notifications:
             found = await asyncio.to_thread(device, request)
             if found is not None:
                 await asyncio.to_thread(self.devices.change, remove=found)
+                await asyncio.to_thread(self.activities.sync)
             return web.json_response({"removed": found is not None})
 
         async def test(request):
@@ -159,15 +184,25 @@ class Notifications:
 
 def register(ctx):
     from hermes_constants import get_hermes_home, get_default_hermes_root
+    from gateway.platforms.send_targets import StandaloneSendPolicy
 
     home = get_hermes_home()
     devices = Devices(home, sequence_home=get_default_hermes_root(home=home))
     global _notifications
     notifications = _notifications = Notifications(ctx, devices)
+    # on_session_start has no native turn ID in Hermes. pre_llm_call does, before the model runs.
+    notifications.cron = CronDelivery(home, notifications.route)
+    ctx.register_hook("pre_tool_call", notifications.cron.before_tool)
+    ctx.register_platform("clawy", "Clawy", adapter_factory=lambda config: cron_adapter(notifications.cron, config),
+                          check_fn=lambda: True, cron_deliver_env_var="CLAWY_HOME_CHANNEL",
+                          standalone_sender_fn=notifications.cron.send,
+                          standalone_send=StandaloneSendPolicy(media=True),
+                          parse_target_ref_fn=lambda target: (target, None))
+    ctx.register_hook("pre_llm_call", notifications.started)
     ctx.register_hook("post_llm_call", notifications.capture)
     ctx.register_hook("on_session_end", notifications.ended)
     ctx.register_hook("on_human_input_request", notifications.human)
-    # Resolutions deliberately produce no push and require no retained state.
+    ctx.register_hook("on_human_input_resolved", notifications.resolved)
     ctx.register_platform_handler("api_server", notifications.wire)
     ctx.on_unload(notifications.close)
 
@@ -181,6 +216,7 @@ def register(ctx):
             if len(raw.encode()) > 8192:
                 raise ValueError("Too large")
             devices.change(device=json.loads(raw))
+            notifications.activities.sync()
         except (ValueError, TypeError, KeyError, OSError, UnicodeError):
             print("Invalid registration or unavailable device file", file=sys.stderr)
             raise SystemExit(1) from None

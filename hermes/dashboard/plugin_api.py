@@ -46,7 +46,7 @@ async def status():
     service = await asyncio.to_thread(observer)
     devices = await asyncio.to_thread(service.devices.all)
     deliveries = await asyncio.to_thread(lambda: service.delivery.deliveries)
-    return {"version": "0.3.0", "protocol": 2, "devices": [
+    return {"version": service.version, "protocol": 2, "liveActivities": 2, "devices": [
         {"id": d["id"], "name": d["name"], "text": d["text"],
          "delivery": deliveries.get(d["id"])} for d in devices]}
 
@@ -57,6 +57,7 @@ async def add(request: Request):
     service = await asyncio.to_thread(observer)
     try:
         await asyncio.to_thread(service.devices.change, device=value)
+        await asyncio.to_thread(service.activities.sync)
     except (ValueError, TypeError, KeyError):
         raise HTTPException(400, "Invalid registration") from None
     except OSError:
@@ -70,6 +71,7 @@ async def remove(device_id: str):
     found = next((d for d in await asyncio.to_thread(service.devices.all) if d["id"] == device_id), None)
     if found is not None:
         await asyncio.to_thread(service.devices.change, remove=found)
+        await asyncio.to_thread(service.activities.sync)
     return {"removed": found is not None}
 
 
