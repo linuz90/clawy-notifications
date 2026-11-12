@@ -9,7 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 # Reuse the suite's recipient and independent sealed-message opener.
-from test_notifications import plugin, recipient
+if __package__:
+    from .test_notifications import plugin, recipient
+else:
+    from test_notifications import plugin, recipient
 from clawy_test_plugin.activity import Activities, activities_registration, activity_registration
 from clawy_test_plugin.delivery import Devices, Delivery, registration
 
