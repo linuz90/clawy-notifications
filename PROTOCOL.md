@@ -1,6 +1,6 @@
-# Clawy sealed push, version 2
+# Clawy notifications, protocol 2
 
-What a plugin on someone's own gateway sends so that Clawy's forwarder and Apple can't read a notification. Both plugins implement this. The forwarder's code is private, so this document is its contract.
+Ordinary notifications are sealed so Clawy's forwarder and Apple cannot read their content. Optional Live Activities use a separate, deliberately public generic lifecycle format. Hermes 0.4.0 implements both routes; the published OpenClaw 0.2.0 plugin implements sealed notifications. Sealed notifications remain protocol 2.
 
 ## Parties
 
@@ -94,8 +94,9 @@ A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes 
 
 ```json
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "protocol": 2,
+  "liveActivities": 2,
   "listening": { "approvals": true, "questions": true },
   "devices": [
     { "id": "relay device id", "name": "Clawy on iPhone", "text": true,
@@ -117,3 +118,46 @@ A plugin applies these, where `rest` is the session key after `agent:<agent>:`:
 - A reply anywhere else is a `refresh`, so a device following that session can read it in the background.
 - An approval or a question alerts from any session. An answered one sends nothing.
 - A failed scheduled task alerts, with `jobId`.
+
+
+## Live Activities, version 2
+
+Plugin version 0.3.0 advertises `liveActivities: 2` in status. The registration optionally adds `activities`, a list of at most four followed chats with distinct tracking ids; omitting it, null or an empty list stops following. Each entry follows one exact backend session, and each becomes one row on the device's single card:
+
+```json
+[{
+  "trackingID": "7b34eddb-598a-41e0-946e-fd7d0090a124",
+  "sessionKey": "agent:default:ios-native-example",
+  "mode": "long",
+  "backgrounded": true,
+  "eligible": false,
+  "currentRun": { "id": "native gateway run or turn id", "startedAt": 1794006306.974 }
+}]
+```
+
+`trackingID` is a UUID; an entry missing from the next registration ends its row as stopped, and a replaced tracking id is a new target. Entries qualify, update and end independently. `currentRun` is optional and seeds an already running native turn. Hermes requires the actual `turn_id`, not its transcript row id. `manual` starts immediately for that explicit current run only. `long` starts while backgrounded once a run reaches 20 seconds. OpenClaw can qualify earlier from the app's `eligible` hint for progress-card steps/helpers/background tasks, a native subagent event, or an explicit sessions_spawn tool. Ordinary tools never qualify early. Hermes uses the time rule alone, ignoring early-eligibility hints. Unrelated sessions never qualify. Updating backgrounded or eligible can qualify an observed run. A terminal run stays terminal; a later native run can qualify in long mode.
+
+The plugin derives `runID` as lowercase SHA256 hex of the UTF-8 native id. It forwards to the fixed origin's `/v1/activity/<deviceID>` with the existing forward bearer token, independently of the sealed route:
+
+```json
+{
+  "v": 1,
+  "trackingID": "7b34eddb-598a-41e0-946e-fd7d0090a124",
+  "runID": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "seq": 1794006326974,
+  "event": "start",
+  "startedAt": 1794006306.974,
+  "phase": "working",
+  "needsYou": 0
+}
+```
+
+Only these public fields and optional terminal `endedAt` leave the plugin. No chat title, session key, command, question, agent name or message text appears on this route. `event` is start, update or end. Working phases are working and needsYou; terminal phases are replied, failed, stopped and stillWorking. `needsYou` is the pending approval/question count, capped at 999; every other phase has zero. Times are Unix seconds. Sequences use the same monotonic allocator as sealed notifications; retries reuse their sequence and exact body.
+
+OpenClaw observes native lifecycle start/end/error and explicit helper-spawn signals, retaining yielded parents. Hermes observes `pre_llm_call` (the first hook with a native turn id), `on_session_end`, and human-input request/resolution hooks; it registers no pre-tool observer. Unresolved request ids are retained before a device follows, so an explicitly seeded manual activity starts as needsYou when the agent already waits. Registration replacement preserves those waits; resolution, native run replacement and terminal outcome clear them. Retention is capped at 256 sessions and 999 ids per session, with eight-hour expiry. Hermes terminal events match a unique exact native turn id across compression segments; ambiguous matches are ignored. Human waits use Hermes's supplied routing session_key when present, with exact request ids retaining resolution identity. Resolution resumes working when none remain. Silent success, abort, error and interruption end an activity. At eight hours an activity ends with stillWorking. Timers are canceled on replacement, terminal outcome and unload. Hermes refreshes the locked registration file once a second while native runs are active, so a dashboard host's registration change reaches the turn observer; dashboard-only instances never start activities.
+
+A successfully started row handles its followed session's approval/question alert; other devices keep their ordinary alert. Reply alerts remain unchanged and activity ends carry no alert. HTTP 200 marks successful start; muted/ignored 202 does not suppress ordinary alerts. Activity failures never remove the ordinary notification registration, including 401 and 410. Starts and updates make at most two HTTP attempts; terminal events make at most three, retrying network failures and 502 only. The queue and retry state are in memory; a crash can lose terminal delivery. App reconciliation and stale presentation cover this gap, without guaranteeing terminal delivery after process death.
+
+The relay checks bearer authentication before rate limits, respects mute, ignores tracking ids the device does not follow (202), and ignores old sequences (200). Per tracking id, a newer generation can replace the current one only with start and a newer startedAt, and terminal generations cannot be revived. The relay merges the followed rows into one card per device: the first working row push-starts it, later rows and changes update it, and it ends once no row is working. A finished row stays for 15 minutes after a reply and one minute otherwise, pruned at the next push; a row whose run ended before any card showed it never appears. A new run after the card ended, or a card nearing iOS's eight-hour limit, dismisses the old card at once and starts a fresh one carrying the finished rows still within their linger. The latest state is retained until the card's token arrives, for at most nine hours. HTTP 200 means the card now shows this row's state. A per-device SQLite Durable Object serializes management and forwarding across regions; activity routes return 503 without that binding. APNs delivery itself is not exactly-once or guaranteed.
+
+The app manages tokens separately with `PUT /v1/activities/<deviceID>` using its management secret, `trackingIDs` (the whole followed set, at most four) with an increasing `revision`, or `revoke` (at most sixteen ids to drop, for a relay the app no longer uses), an optional pushToStartToken, an optional `{cardID,value}` update token, and `card`: the card id the device shows for this relay device, or null for none. Dropped ids are retired for nine hours; a set older than the last applied revision, or naming a retired id, is ignored. A token for a card the relay no longer holds is ignored. Right after a push-start, and at most once a minute while the card's token is missing, the relay sends the device's ordinary APNs token a background push carrying only `{"aps":{"content-available":1},"clawyActivity":1}`, so a suspended app wakes to hand the token over. A started card the device reports missing for more than two minutes was swiped away or ended by iOS: the relay stops updating it, keeps the runs it showed working off later cards, and starts a fresh card for new work. The object wakes itself to move a card still carrying work to a fresh one before iOS ends it at eight hours. Activity APNs uses RunActivityAttributes with the relay's `cardID`, `startedAt` and `device` (the relay device id, so a device following chats on several gateways tells their cards apart), content state `{rows: [{id, run, phase, needsYou, startedAt, endedAt?}]}` (id is the tracking id, run the run hash), priority 10 and the `.push-type.liveactivity` topic. Start alerts say Clawy / Your agent is still working (Your agents are still working with several rows, Your agent needs you when one waits); an update alerts only when the total waiting count rises, and ends are silent. A card whose last row was dropped dismisses immediately; otherwise an ended card stays until its last row's linger.

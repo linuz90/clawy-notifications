@@ -16,6 +16,7 @@ import urllib.request
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from .seal import decode, encode, seal
+from .activity import activities_registration
 
 LOG = logging.getLogger("clawy.notifications")
 
@@ -43,7 +44,8 @@ def registration(value):
     if len(public) != 65 or public[0] != 4 or len(auth) != 16:
         raise ValueError("Invalid recipient keys")
     ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public)
-    return {key: value[key] for key in ("v", "id", "name", "forwarder", "token", "p256dh", "auth", "text")}
+    activities = activities_registration(value.get("activities"))
+    return {**{key: value[key] for key in ("v", "id", "name", "forwarder", "token", "p256dh", "auth", "text")}, **({"activities": activities} if activities else {})}
 
 
 class Devices:
@@ -162,6 +164,7 @@ class Delivery:
         self.devices = devices
         self.pending = queue.Queue(maxsize=64)
         self.stopping = threading.Event()
+        self.activity_handled = lambda device, alert: False
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         self.worker = threading.Thread(target=self._work, name="clawy-push", daemon=True)
         self.worker.start()
@@ -174,6 +177,34 @@ class Delivery:
         except queue.Full:
             LOG.warning("Clawy push queue full; dropped notification")
 
+    def submit_activity(self, device, event, callback):
+        if self.stopping.is_set():
+            return
+        try:
+            self.pending.put_nowait((device, event, callback))
+        except queue.Full:
+            LOG.warning("Clawy push queue full; dropped activity")
+
+    def _activity_post(self, device, event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        route = f'{forwarder_origin()}/v1/activity/{urllib.parse.quote(device["id"], safe="")}'
+        for _ in range(3 if event["event"] == "end" else 2):
+            request = urllib.request.Request(route, data=body, headers={
+                "Authorization": "Bearer " + device["token"], "Content-Type": "application/json"})
+            try:
+                with self.http.open(request, timeout=5) as response:
+                    code = response.status
+            except urllib.error.HTTPError as error:
+                code = error.code
+                error.close()
+            except (OSError, ValueError):
+                continue
+            if code == 502:
+                continue
+            # Live Activity failures never retire the ordinary device registration.
+            return code == 200
+        return False
+
     def _work(self):
         while not self.stopping.is_set() or not self.pending.empty():
             try:
@@ -181,7 +212,16 @@ class Delivery:
             except queue.Empty:
                 continue
             try:
+                if isinstance(alert, tuple):
+                    device, event, callback = alert
+                    try:
+                        callback(self._activity_post(device, event))
+                    except Exception:
+                        LOG.warning("Clawy activity push failed")
+                    continue
                 for device in self.devices.all():
+                    if self.activity_handled(device, alert):
+                        continue
                     try:
                         self.send(device, alert)
                     except Exception:
