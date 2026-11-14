@@ -107,7 +107,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8")
     .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__clawyActivityTest;')
     .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__clawyActivityTest;')
-    .replace(/from "\.\/(\w+)\.ts"/gu, (_, name) => `from "${new URL(`../${name}.ts`, import.meta.url)}"`);
+    .replace(/from "\.\/([\w-]+)\.ts"/gu, (_, name) => `from "${new URL(`../${name}.ts`, import.meta.url)}"`);
   mock.createOperatorApprovalsGatewayClient = async (options: any) => { observers.push(options); return { start() {}, stop() {} }; };
   mock.GatewayClient = class { constructor(options: any) { observers.push(options); } start() {} stop() {} };
   mock.resolveGatewayAuth = () => ({});
@@ -115,10 +115,10 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
   globalThis.fetch = (async (url, options) => { posts.push({ url, body: JSON.parse(options!.body as string) }); return new Response(null, { status: 200 }); }) as any;
   try {
     const plugin = (await import(pathToFileURL(join(folder, "plugin.mjs")).href)).default;
-    plugin.register({ logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
+    plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
     let result: any;
     const call = (method: string, params = {}) => methods.get(`clawy.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
-    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.3.0");
+    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.1");
     const d = device(); call("register", d); await service.start({ config: {} });
     const fire = async (runId: string, data: any) => { event({ sessionKey: d.activities![0].sessionKey, runId, stream: "lifecycle", data }); await new Promise(setImmediate); };
     await fire("ordinary-tool", { phase: "start", startedAt: Date.now() });
@@ -255,4 +255,36 @@ test("a carried-on row stays finished, takes a manual follow of its announce tur
   h.activities.start(key, "fresh"); await h.tick(25);
   assert.deepEqual([h.sent.at(-1)?.event, h.sent.at(-1)?.runID], ["start", createHash("sha256").update("fresh").digest("hex")]);
   h.activities.close(); assert.equal(h.scheduled.size, 0);
+});
+
+test("a chat followed afresh while only its helpers work gets a working row once the person leaves", async () => {
+  // The app follows the chat on screen under a new tracking id each time it opens, so a turn that
+  // ended with its helpers working before this follow leaves no row of its own to carry on.
+  const f = fixture(), d = device(), first = d.activities![0], key = first.sessionKey;
+  f.activities.register({ ...d, activities: [{ ...first, backgrounded: false }] });
+  f.activities.start(key, "parent"); await f.tick(10); f.activities.helper(key, "agent:a:subagent:one", true);
+  f.activities.end(key, "parent", "replied"); await f.tick(5);
+  const reopened = { ...first, trackingID: "9b34eddb-598a-41e0-946e-fd7d0090a124", backgrounded: false, eligible: true };
+  f.activities.register({ ...d, activities: [reopened] }); await f.tick(30);
+  assert.equal(f.sent.length, 0, "nothing shows while the chat is on screen");
+  f.activities.register({ ...d, activities: [{ ...reopened, backgrounded: true }] }); await f.tick();
+  assert.deepEqual([f.sent.at(-1)?.trackingID, f.sent.at(-1)?.event, f.sent.at(-1)?.phase, f.sent.at(-1)?.startedAt], [reopened.trackingID, "start", "working", 1010]);
+  // Its timer runs from the first helper's start; the announce turn carries the row on, and ends it.
+  f.activities.helper(key, "agent:a:subagent:one", false); f.activities.resume(key, "announce"); await f.tick(120);
+  assert.equal(f.sent.length, 1);
+  f.activities.end(key, "announce", "replied"); await f.tick();
+  assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.phase], ["end", "replied"]);
+  f.activities.close(); assert.equal(f.scheduled.size, 0);
+
+  // A chat first followed while a helper works, with no turn of its own seen, does the same; one
+  // with no helper working stays off the card.
+  const g = fixture();
+  g.activities.helper(key, "agent:a:subagent:two", true); await g.tick(40);
+  g.activities.register({ ...d, activities: [{ ...first, eligible: true }] }); await g.tick();
+  assert.deepEqual([g.sent.at(-1)?.event, g.sent.at(-1)?.phase, g.sent.at(-1)?.startedAt], ["start", "working", 1000]);
+  g.activities.helper(key, "agent:a:subagent:two", false); await g.tick(60);
+  assert.deepEqual([g.sent.at(-1)?.event, g.sent.at(-1)?.phase], ["end", "replied"], "a helper that announces nothing ends the row after the grace");
+  g.activities.register({ ...d, activities: [{ ...first, trackingID: reopened.trackingID }] }); await g.tick(30);
+  assert.equal(g.sent.filter(e => e.event === "start").length, 1);
+  g.activities.close(); assert.equal(g.scheduled.size, 0);
 });

@@ -41,3 +41,11 @@ It needs no `allowConversationAccess`, and it reads no transcript history. That 
 - An automation's post: `onSessionTranscriptUpdate` publishing the committed message with its chat's key and a `messageId`, and `openclawAutomation` marking it. The contract test checks both names are still there; the shape was read from OpenClaw `2026.10.7`'s `commitBackgroundResultToSession` and `publishTranscriptTurnUpdate`.
 - `createOperatorApprovalsGatewayClient`, and a backend `GatewayClient` connecting without pairing on loopback.
 - `registerGatewayMethod` and the `cron_changed` hook.
+
+## Device tools
+
+The plugin also owns Clawy's fixed `clawy_iphone_*`, `clawy_ipad_*` and `clawy_mac_*` tools ([device-tools.ts](device-tools.ts)). Their names and schemas stay the same when devices disconnect or sharing changes. Each call resolves a connected Clawy node in that family, then uses OpenClaw's canonical `node.invoke`: gateway command approval and the device's sharing and per-agent checks still apply. Multiple matching devices require an explicit `nodeId`; calls never retry on another device. No connected device returns an instruction to open Clawy.
+
+These tools need the updated app on every sharing device. Older apps still publish dynamic node tools, which OpenClaw renames alongside the fixed copies and can still reset a native Claude conversation. The first plugin/app upgrade changes the catalog once; a host that refuses transcript replay may lose native context on that transition. This plugin does not change host authentication or replay configuration. `clawy.devices.status` (`operator.read`) advertises protocol 2: the fixed catalog routes both native Mac clients and older iOS-tagged Mac clients. Mac sharing requires protocol 2; iPhone and iPad also accept protocol 1.
+
+The catalog contains 28 tools (10 each for iPhone and iPad, eight for Mac), even for device families and sources not in use. This fixed set avoids resets when another device is paired; source grants still decide what each call may read or change. Device tools use plugin policy id `clawy-notifications`, not the dynamic-node `clawy` id or `gateway.nodes.pluginTools.enabled`.

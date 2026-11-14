@@ -9,8 +9,9 @@ import { canRegister, DeviceFile, parseDevice, Sequence,             } from "./d
 import { approvalMessage, automationPostMessage, failedJobMessage, questionMessage, replyMessage,              } from "./route.js";
 import { fit, seal } from "./seal.js";
 import { Activities } from "./activity.js";
+import { registerDeviceTools } from "./device-tools.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.1";
 /** Bumped whenever a device needs something new from this plugin. PROTOCOL.md. */
 const PROTOCOL = 2;
 
@@ -22,6 +23,7 @@ export default definePluginEntry({
   name: "Clawy notifications",
   description: "Sealed push notifications for Clawy.",
   register(api) {
+    registerDeviceTools(api);
     const log = api.logger;
     const state = join(api.runtime.state.resolveStateDir(process.env), "clawy-notifications");
     const devices = new DeviceFile(join(state, "devices.json"));

@@ -37,8 +37,8 @@ export class Activities {
           targets = new Map                ();
           runs = new Map             ();
           waits = new Map                                                                    ();
-  /** Helper sessions still working, by the session that spawned them. */
-          helpers = new Map                                                                    ();
+  /** Helper sessions still working, by the session that spawned them, since the first started. */
+          helpers = new Map                                                                                   ();
           closed = false;
           next              ;
           post                                                   ;
@@ -71,6 +71,7 @@ export class Activities {
         run = { ...follow.currentRun, native: follow.currentRun.id, turns: new Set([follow.currentRun.id]), eligible: false, pending: this.waits.get(follow.sessionKey)?.ids ?? new Set(), ended: false, held: false };
         this.runs.set(follow.sessionKey, run);
       }
+      run ??= this.heldForHelpers(follow.sessionKey);
       target.run = run;
       this.qualify(target);
     }
@@ -138,7 +139,7 @@ export class Activities {
         const ids = new Set        ();
         const timer = this.time.later(() => { if (this.helpers.get(parent)?.ids === ids) this.forgetHelpers(parent); }, this.time.cap * 1000);
         timer.unref?.();
-        helpers = { ids, timer };
+        helpers = { ids, since: this.time.now(), timer };
         this.helpers.set(parent, helpers);
       }
       if (helpers.ids.size < 999) helpers.ids.add(id);
@@ -158,6 +159,16 @@ export class Activities {
     this.time.cancel(run.grace);
     run.grace = this.time.later(() => { if (this.runs.get(parent) === run && run.held) this.finish(parent, run, "replied"); }, this.time.grace * 1000);
     run.grace.unref?.();
+  }
+  /** A chat followed while only its helpers work, its turn ended before this follow (the app follows
+   * a chat afresh each time it opens): a row held for them, as if that turn had just ended. */
+          heldForHelpers(session        )                  {
+    const helpers = this.helpers.get(session);
+    if (!helpers?.ids.size) return undefined;
+    const id = `helpers\n${session}\n${helpers.since}`;
+    const run      = { id, native: id, turns: new Set([id]), startedAt: helpers.since, eligible: true, pending: this.waits.get(session)?.ids ?? new Set(), ended: false, held: true };
+    this.runs.set(session, run);
+    return run;
   }
   async human(session                    , requestID        , resolved = false)                       {
     const handled = new Set        ();

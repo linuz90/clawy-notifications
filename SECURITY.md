@@ -9,6 +9,7 @@ Please report a vulnerability privately, through GitHub's [private reporting](ht
 - Making a gateway post to a host other than the one fixed in the plugin.
 - A plugin leaking message text, commands, keys or tokens into logs or anywhere else.
 - An unauthenticated caller reaching a plugin's methods or routes.
+- A device tool bypassing OpenClaw's command approval or Clawy's source-sharing and per-agent checks, or silently routing a refused write to another device.
 
 ## Known limits
 

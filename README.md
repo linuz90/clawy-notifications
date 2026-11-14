@@ -26,7 +26,7 @@ flowchart LR
 
 **Apple and our server still know when to wake your device.** They see that a notification is on its way, and whether it's an alert or a quiet background refresh. Never what it says.
 
-**The plugin sees your alerts.** It runs inside your gateway, with its access. It's under 500 lines per gateway with no dependencies of its own, so you can read it.
+**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked. It has no dependencies of its own, so you can read it.
 
 **It's for a gateway with one owner.** Every device registered with the plugin gets every alert.
 
@@ -51,7 +51,7 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.3.0 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.4.1 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 

@@ -4,5 +4,37 @@
   "description": "Decides on your gateway what should alert, seals it to your device's key, and hands the ciphertext to Clawy's forwarder.",
   "categories": ["other"],
   "activation": { "onStartup": true },
-  "configSchema": { "type": "object", "additionalProperties": false }
+  "configSchema": { "type": "object", "additionalProperties": false },
+  "contracts": {
+    "tools": [
+      "clawy_iphone_health",
+      "clawy_iphone_location",
+      "clawy_iphone_calendar_events",
+      "clawy_iphone_calendar_add",
+      "clawy_iphone_reminders",
+      "clawy_iphone_reminders_add",
+      "clawy_iphone_contacts",
+      "clawy_iphone_chats",
+      "clawy_iphone_chats_update",
+      "clawy_iphone_places",
+      "clawy_ipad_health",
+      "clawy_ipad_location",
+      "clawy_ipad_calendar_events",
+      "clawy_ipad_calendar_add",
+      "clawy_ipad_reminders",
+      "clawy_ipad_reminders_add",
+      "clawy_ipad_contacts",
+      "clawy_ipad_chats",
+      "clawy_ipad_chats_update",
+      "clawy_ipad_places",
+      "clawy_mac_calendar_events",
+      "clawy_mac_calendar_add",
+      "clawy_mac_reminders",
+      "clawy_mac_reminders_add",
+      "clawy_mac_contacts",
+      "clawy_mac_chats",
+      "clawy_mac_chats_update",
+      "clawy_mac_places"
+    ]
+  }
 }
