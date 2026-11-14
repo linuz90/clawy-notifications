@@ -23,6 +23,7 @@ No runtime dependencies beyond OpenClaw and Node.
 - Questions and resolutions, over an operator client signed in with this gateway's own token or password (`operator.questions`), resolved the way the gateway resolves them, secret references included.
 - Failed scheduled tasks, from the `cron_changed` hook.
 - An automation's post, from `api.runtime.events.onSessionTranscriptUpdate`: every message committed to a transcript passes through it, and it acts only on one carrying `openclawAutomation`, a scheduled task's result committed into a chat, which no run of that chat announces.
+- A message posted with `chat.inject` (a script telling you a job is done, say), from the same listener: an assistant message from `provider: openclaw`, `model: gateway-injected`, with no `idempotencyKey` or `openclawAbort`. Those two mark the gateway's other injected rows (a slash command's reply, a run's mirrored reply, a stopped reply's partial), whose run or send already covers them. No run announces an injected message, and OpenClaw's own Web Push skips it, so without the plugin nothing alerts.
 
 It needs no `allowConversationAccess`, and it reads no transcript history. That grant isn't a sandbox, though: a plugin runs inside your gateway, and this one sees reply text without it. What keeps it honest is that you can read what it does with it.
 
@@ -39,6 +40,7 @@ It needs no `allowConversationAccess`, and it reads no transcript history. That 
 - Native lifecycle identities, millisecond startedAt, terminal aborted/yielded flags and error phase; activity tests drive the actual observer wiring without calling a model.
 - The reply text, from the `terminalReply` field of a run's `lifecycle` end event. The contract test can only check that it's still in the SDK's types, since a real turn needs a model.
 - An automation's post: `onSessionTranscriptUpdate` publishing the committed message with its chat's key and a `messageId`, and `openclawAutomation` marking it. The contract test checks both names are still there; the shape was read from OpenClaw `2026.10.7`'s `commitBackgroundResultToSession` and `publishTranscriptTurnUpdate`.
+- A `chat.inject` message: the row `appendInjectedAssistantMessageToTranscript` writes (`model: gateway-injected`, no `idempotencyKey`), as `2026.10.7` and `2026.11.3` write it. If a release starts giving it a send key, injected messages stop alerting.
 - `createOperatorApprovalsGatewayClient`, and a backend `GatewayClient` connecting without pairing on loopback.
 - `registerGatewayMethod` and the `cron_changed` hook.
 

@@ -6,12 +6,12 @@ import { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { join } from "node:path";
 import { canRegister, DeviceFile, parseDevice, Sequence,             } from "./devices.js";
-import { approvalMessage, automationPostMessage, failedJobMessage, questionMessage, replyMessage,              } from "./route.js";
+import { approvalMessage, automationPostMessage, failedJobMessage, injectedMessage, questionMessage, replyMessage,              } from "./route.js";
 import { fit, seal } from "./seal.js";
 import { Activities } from "./activity.js";
 import { registerDeviceTools } from "./device-tools.js";
 
-const VERSION = "0.4.1";
+const VERSION = "0.4.2";
 /** Bumped whenever a device needs something new from this plugin. PROTOCOL.md. */
 const PROTOCOL = 2;
 
@@ -141,10 +141,11 @@ export default definePluginEntry({
           send(replyMessage(event));
         });
 
-        // An automation's post lands in its chat by a transcript commit, not a run of the chat's own.
-        // A retried commit can publish the same message again: one push per message.
+        // An automation's post, or a message posted with `chat.inject`, lands in its chat by a
+        // transcript commit, not a run of the chat's own. A retried commit can publish the same
+        // message again: one push per message.
         const offPosts = api.runtime.events.onSessionTranscriptUpdate((update) => {
-          const message = automationPostMessage(update);
+          const message = automationPostMessage(update) ?? injectedMessage(update);
           if (!message) return;
           const id = update.messageId;
           if (id) {

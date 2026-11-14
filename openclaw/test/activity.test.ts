@@ -118,7 +118,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
     let result: any;
     const call = (method: string, params = {}) => methods.get(`clawy.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
-    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.1");
+    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.2");
     const d = device(); call("register", d); await service.start({ config: {} });
     const fire = async (runId: string, data: any) => { event({ sessionKey: d.activities![0].sessionKey, runId, stream: "lifecycle", data }); await new Promise(setImmediate); };
     await fire("ordinary-tool", { phase: "start", startedAt: Date.now() });

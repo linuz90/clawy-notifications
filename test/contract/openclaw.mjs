@@ -94,9 +94,18 @@ try {
   assert.ok(question.seq > test.seq);
   console.log("question sealed from a live event");
 
+  // A message posted with chat.inject starts no run: only the transcript listener hears it.
+  const chat = "agent:main:ios-native-inject";
+  await call("sessions.create", { key: chat, agentId: "main", label: "Contract inject" });
+  await call("chat.inject", { sessionKey: chat, message: "Your build finished." });
+  const injected = await forwarder.waitFor((m) => m.sessionKey === chat, "chat.inject reply");
+  assert.equal(injected.kind, "reply");
+  assert.equal(injected.body, "Your build finished.");
+  console.log("chat.inject message sealed from the transcript listener");
+
   const delivery = (await call("clawy.notifications.status")).devices.find((d) => d.id === forwarder.device.id)?.delivery;
   assert.equal(delivery?.status, 200);
-  assert.equal(delivery?.seq, question.seq);
+  assert.equal(delivery?.seq, injected.seq);
   console.log("status reports the last delivery");
   console.log("OK");
 } finally {

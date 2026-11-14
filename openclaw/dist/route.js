@@ -35,14 +35,33 @@ export function replyMessage(event                                              
 
 /** A scheduled task's result committed into a chat, from `onSessionTranscriptUpdate`: an assistant
  * message carrying `openclawAutomation`. The job's run ends in its own `cron:` session, which
- * `replyMessage` skips, so this is the only word that the chat has something new. */
+ * `replyMessage` skips, so this is the only word that the chat has something new. The marker isn't
+ * a promise of OpenClaw's: README.md, "What could break between OpenClaw releases". */
 export function automationPostMessage(update                                                                       )                 {
   const message = update.message;
   if (message?.role !== "assistant" || !message.openclawAutomation || !update.target?.sessionKey) return null;
+  return routeReply(update.target.sessionKey, update.target.agentId, textOf(message));
+}
+
+/** A message posted into a chat with `chat.inject`, such as a script telling the person a job is
+ * done, from `onSessionTranscriptUpdate`. It starts no run, so `replyMessage` never hears of it, and
+ * the gateway's own Web Push skips it as transcript-only. The gateway writes other
+ * `gateway-injected` rows too, which this leaves alone: a slash command's reply and a run's
+ * mirrored reply carry their send's `idempotencyKey`, and a stopped reply's partial carries
+ * `openclawAbort`. `chat.inject` writes neither. A guess at the row's shape, not a promise of
+ * OpenClaw's: README.md, "What could break between OpenClaw releases". */
+export function injectedMessage(update                                                                       )                 {
+  const message = update.message;
+  if (message?.role !== "assistant" || message.provider !== "openclaw" || message.model !== "gateway-injected") return null;
+  if (message.idempotencyKey || message.openclawAbort || !update.target?.sessionKey) return null;
+  return routeReply(update.target.sessionKey, update.target.agentId, textOf(message));
+}
+
+function textOf(message     )                     {
   const text = Array.isArray(message.content)
     ? message.content.filter((block     ) => block?.type === "text" && typeof block.text === "string").map((block     ) => block.text).join("\n").trim()
     : typeof message.content === "string" ? message.content.trim() : "";
-  return routeReply(update.target.sessionKey, update.target.agentId, text || undefined);
+  return text || undefined;
 }
 
 /** An app chat alerts with the text, a session someone may follow gets a silent refresh, and the

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canRegister, forwarderOrigin, parseDevice, Sequence } from "../devices.ts";
-import { approvalMessage, automationPostMessage, failedJobMessage, questionMessage, replyMessage } from "../route.ts";
+import { approvalMessage, automationPostMessage, failedJobMessage, injectedMessage, questionMessage, replyMessage } from "../route.ts";
 import { fit, PADDED_LENGTH, seal } from "../seal.ts";
 
 // An independent opener, written from RFC 8291, so the test doesn't check seal.ts against itself.
@@ -103,6 +103,26 @@ test("an automation's post into a chat routes like a reply, and other transcript
   assert.equal(automationPostMessage(post("agent:juno:ios-native-1", { openclawAutomation: undefined })), null);
   assert.equal(automationPostMessage(post("agent:juno:ios-native-1", { role: "user" })), null);
   assert.equal(automationPostMessage({ target: { sessionKey: "agent:juno:ios-native-1" } }), null);
+});
+
+test("a message posted with chat.inject routes like a reply, and the gateway's other injected rows send nothing", () => {
+  // As OpenClaw 2026.10.7's chat.inject writes it (appendInjectedAssistantMessageToTranscript): no run, no send key.
+  const injected = (sessionKey: string, message: Record<string, any> = {}) => ({
+    target: { agentId: sessionKey.split(":")[1], sessionId: "s1", sessionKey },
+    messageId: "m2",
+    message: { role: "assistant", content: [{ type: "text", text: "Your build finished." }], provider: "openclaw", model: "gateway-injected", ...message },
+  });
+  assert.deepEqual(injectedMessage(injected("agent:juno:ios-native-1")), { v: 2, kind: "reply", body: "Your build finished.", sessionKey: "agent:juno:ios-native-1", agentId: "juno" });
+  assert.equal(injectedMessage(injected("agent:main:telegram:direct:1"))?.kind, "refresh");
+  assert.equal(injectedMessage(injected("agent:main:main")), null);
+  // A slash command's reply and a run's mirrored reply carry their send's key; a stopped reply's
+  // partial carries openclawAbort. Their run's end, or the person's own send, covers those.
+  assert.equal(injectedMessage(injected("agent:juno:ios-native-1", { idempotencyKey: "run-1" })), null);
+  assert.equal(injectedMessage(injected("agent:juno:ios-native-1", { openclawAbort: { aborted: true, origin: "rpc", runId: "run-1" } })), null);
+  // A model's reply, and a delivery copy, aren't injected.
+  assert.equal(injectedMessage(injected("agent:juno:ios-native-1", { provider: "anthropic", model: "claude-opus-5-5" })), null);
+  assert.equal(injectedMessage(injected("agent:juno:ios-native-1", { model: "delivery-mirror" })), null);
+  assert.equal(injectedMessage(injected("agent:juno:ios-native-1", { role: "user" })), null);
 });
 
 test("approvals and questions alert from any session, answered ones send nothing", () => {
