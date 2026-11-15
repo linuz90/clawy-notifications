@@ -54,7 +54,7 @@ The plaintext is UTF-8 JSON:
 }
 ```
 
-The device reads only these fields, and takes the device id from the push it opened with, so a message can't name another gateway. On a gateway using this route it trusts nothing outside the seal: a push that doesn't open shows a bare placeholder and carries no actions. An approval whose text is missing or shortened offers no Allow. For an exec approval the text is the command, and for a plugin approval it's the title and description, each trimmed, on two lines: Allow compares it byte for byte with what's pending.
+The device reads only these fields, and takes the device id from the push it opened with, so a message can't name another gateway. On a gateway using this route it trusts nothing outside the seal: a push that doesn't open shows a bare placeholder and carries no actions. An approval whose text is missing or shortened offers no Allow. For an exec approval the text is the command, for a plugin approval it's the title and description, each trimmed, on two lines, and for a change to the gateway's setup (`openclaw.approval.requested`) it's the request's description as sent: Allow compares it byte for byte with what's pending.
 
 A `refresh` only counts as a silent push, and anything else only as an alert. A device that opens a push writes a receipt beside it, a code only it can make, and from then on acts only on a push with a receipt. So a push that reaches the screen without going through the device's notification extension can show words of its own, but a tap on it does nothing and it offers nothing that works.
 

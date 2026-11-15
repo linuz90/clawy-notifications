@@ -84,10 +84,13 @@ function pluginApprovalText(request                     )                     {
 
 /** `exec.approval.requested` and `plugin.approval.requested`. Answered ones send nothing. */
 export function approvalMessage(event        , payload                     )                 {
-  if (event !== "exec.approval.requested" && event !== "plugin.approval.requested") return null;
+  if (event !== "exec.approval.requested" && event !== "plugin.approval.requested" && event !== "openclaw.approval.requested") return null;
   const request = payload.request ?? {};
   // The real command, not a preview: the app offers Allow only if this is exactly what's pending.
-  const body = event === "exec.approval.requested" ? request.command : pluginApprovalText(request);
+  // A setup change's is OpenClaw's own sentence for it, untrimmed, as the app reads it.
+  const body = event === "exec.approval.requested" ? request.command
+    : event === "openclaw.approval.requested" ? request.description ?? request.command
+    : pluginApprovalText(request);
   return { v: 2, kind: "approval", approvalId: payload.id, body, sessionKey: request.sessionKey ?? undefined, agentId: request.agentId ?? undefined };
 }
 

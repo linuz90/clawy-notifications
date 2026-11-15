@@ -130,7 +130,10 @@ test("approvals and questions alert from any session, answered ones send nothing
   assert.deepEqual(exec, { v: 2, kind: "approval", approvalId: "a1", body: "echo hi", sessionKey: "agent:juno:telegram:direct:1", agentId: "juno" });
   assert.equal(approvalMessage("plugin.approval.requested", { id: "plugin:1", request: { description: "Post to #beta" } })?.body, "Post to #beta");
   assert.equal(approvalMessage("plugin.approval.requested", { id: "plugin:1", request: { title: " Send email ", description: "To everyone, with the attachment" } })?.body, "Send email\nTo everyone, with the attachment");
+  const change = approvalMessage("openclaw.approval.requested", { id: "system-agent:1", request: { title: "OpenClaw change", description: "set config ui.seamColor to #ff8800", command: "set config ui.seamColor to #ff8800", sessionKey: "agent:max:ios-native-1", agentId: "max" } });
+  assert.deepEqual(change, { v: 2, kind: "approval", approvalId: "system-agent:1", body: "set config ui.seamColor to #ff8800", sessionKey: "agent:max:ios-native-1", agentId: "max" });
   assert.equal(approvalMessage("exec.approval.resolved", { id: "a1" }), null);
+  assert.equal(approvalMessage("openclaw.approval.resolved", { id: "system-agent:1" }), null);
   assert.equal(questionMessage("question.requested", { id: "ask_1", questions: [{ question: "Blue or green?" }], sessionKey: "agent:juno:main", agentId: "juno" })?.body, "Blue or green?");
   assert.equal(questionMessage("question.resolved", { id: "ask_1" }), null);
 });

@@ -11,7 +11,7 @@ import { fit, seal } from "./seal.ts";
 import { Activities } from "./activity.ts";
 import { registerDeviceTools } from "./device-tools.ts";
 
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 /** Bumped whenever a device needs something new from this plugin. PROTOCOL.md. */
 const PROTOCOL = 2;
 
@@ -163,7 +163,8 @@ export default definePluginEntry({
           clientDisplayName: "Clawy notifications",
           onEvent: (frame) => {
             const payload = frame.payload as Record<string, any>;
-            if (!frame.event.startsWith("exec.approval.") && !frame.event.startsWith("plugin.approval.")) return;
+            // `openclaw.approval.*` is a change to the gateway's own setup an agent asked for.
+            if (!["exec.approval.", "plugin.approval.", "openclaw.approval."].some(prefix => frame.event.startsWith(prefix))) return;
             const resolved = frame.event.endsWith(".resolved");
             void activities.human(payload.request?.sessionKey, `${frame.event.split(".")[0]}:${payload.id}`, resolved)
               .then(handled => send(approvalMessage(frame.event, payload), handled))
