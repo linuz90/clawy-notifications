@@ -212,7 +212,11 @@ class DeliveryTests(unittest.TestCase):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 owner.received.append((self.headers.get("Authorization"), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
-                self.send_response(owner.statuses.pop(0) if owner.statuses else 200)
+                status = owner.statuses.pop(0) if owner.statuses else 200
+                if status == 0:  # No answer at all: the connection drops.
+                    self.close_connection = True
+                    return
+                self.send_response(status)
                 self.send_header("Retry-After", "120")
                 self.send_header("Location", "/redirect-must-not-receive-token")
                 self.end_headers()
@@ -262,6 +266,19 @@ class DeliveryTests(unittest.TestCase):
         envelope = self.received[-1][1]
         self.assertEqual(envelope["kind"], "silent")
         self.assertNotIn("body", open_record(unbase(envelope["sealed"]), self.private, unbase(self.device["auth"])))
+
+    def test_no_answer_is_tried_once_more_with_the_same_body(self):
+        self.statuses[:] = [0]
+        before = len(self.received)
+        self.assertEqual(self.delivery.send(self.device, self.alert), 200)
+        self.assertEqual(len(self.received) - before, 2)
+        self.assertEqual(self.received[-2], self.received[-1])
+        self.assertEqual(self.delivery.deliveries[self.device["id"]]["status"], 200)
+        self.statuses[:] = [0, 0]
+        with self.assertRaises(OSError):
+            self.delivery.send(self.device, self.alert)
+        self.assertEqual(self.delivery.deliveries[self.device["id"]]["status"], 0)
+        self.assertTrue(self.devices.all())
 
     def test_a_sequence_only_goes_up_past_a_clock_set_back_and_across_restarts(self):
         first = self.devices.next_seq()

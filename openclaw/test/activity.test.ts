@@ -14,10 +14,11 @@ function device(overrides = {}): Device {
   const key = createECDH("prime256v1"); key.generateKeys();
   return { v: 2, id: "one", forwarder: "https://openclaw-client-relay.linuz90.workers.dev/v1/forward/one", token: "fake", p256dh: key.getPublicKey().toString("base64url"), auth: Buffer.alloc(16).toString("base64url"), activities: [{ trackingID, sessionKey: "agent:a:ios-native-one", mode: "long", backgrounded: true, eligible: false, ...overrides }] };
 }
-function fixture() {
+/** Older tests keep the time rule alone (20 s, no settle, no window); `timing` sets the rest. */
+function fixture(timing: { threshold?: number; settle?: number; window?: number } = {}) {
   let now = 1000, seq = 0;
   const scheduled = new Set<any>(), sent: ActivityEvent[] = [];
-  const time = { now: () => now, threshold: 20, cap: 8 * 3600, grace: 60,
+  const time = { now: () => now, threshold: 20, settle: 0, window: Infinity, ...timing, cap: 8 * 3600, grace: 60,
     later: ((fn: () => void, delay: number) => { const token = { fn, due: now + delay / 1000, unref() {} }; scheduled.add(token); return token; }) as any,
     cancel: ((token: any) => scheduled.delete(token)) as any };
   const activities = new Activities(() => ++seq, async (_, e) => { sent.push(e); return true; }, time);
@@ -49,6 +50,55 @@ test("long mode ignores quick, unrelated and foreground runs; background registr
   f.activities.end(key, "slow", "replied"); await f.tick(); assert.equal(f.sent.at(-1)?.phase, "replied"); assert.equal(f.scheduled.size, 0);
   f.activities.start(key, "disabled"); const stale = [...f.scheduled][0];
   f.activities.register({ ...d, activities: undefined }); const count = f.sent.length; stale.fn(); await f.tick(30); assert.equal(f.sent.length, count); assert.equal(f.scheduled.size, 0); f.activities.close();
+});
+
+const timing = { threshold: 60, settle: 15, window: 120 };
+const away = (d: Device, backgrounded: boolean, extra = {}) => ({ ...d, activities: [{ ...d.activities![0], backgrounded, ...extra }] });
+
+test("long mode shows a run still working a while after the person left, never an ordinary turn they leave near its end", async () => {
+  const f = fixture(timing), d = device(), key = d.activities![0].sessionKey;
+  f.activities.register(away(d, false)); f.activities.start(key, "ordinary"); await f.tick(50);
+  f.activities.register(away(d, true)); await f.tick(5);
+  assert.equal(f.sent.length, 0, "a turn already past the threshold waits for the person to have been away a while");
+  f.activities.end(key, "ordinary", "replied"); await f.tick(30); assert.equal(f.sent.length, 0, "it ended first: its reply's notification is enough");
+  f.activities.start(key, "long"); await f.tick(59); assert.equal(f.sent.length, 0, "a minute of work makes a run long");
+  await f.tick(1); assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.phase], ["start", "working"]);
+  f.activities.end(key, "long", "replied"); await f.tick();
+
+  // Watched in the app for minutes, it shows once the person has been away for the settle time.
+  f.activities.register(away(d, false)); f.activities.start(key, "watched"); await f.tick(300);
+  f.activities.register(away(d, true)); await f.tick(14); assert.equal(f.sent.at(-1)?.phase, "replied");
+  await f.tick(1); assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.runID], ["start", createHash("sha256").update("watched").digest("hex")]);
+  f.activities.close(); assert.equal(f.scheduled.size, 0);
+});
+
+test("the app's early hint covers the run it was sent with, not the chat's later runs", async () => {
+  const f = fixture(timing), d = device(), key = d.activities![0].sessionKey;
+  f.activities.register(away(d, true, { eligible: true, currentRun: { id: "helped", startedAt: 1000 } })); await f.tick();
+  assert.equal(f.sent.at(-1)?.event, "start", "a run with a helper or progress card shows at once");
+  f.activities.end(key, "helped", "replied"); await f.tick();
+  f.activities.start(key, "later"); await f.tick(30);
+  assert.equal(f.sent.at(-1)?.phase, "replied", "a later run of the chat waits for the time rule");
+  await f.tick(30); assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.runID], ["start", createHash("sha256").update("later").digest("hex")]);
+  f.activities.end(key, "later", "replied"); await f.tick();
+  // A registration naming an earlier run, late, doesn't hand its hint to the run going now.
+  f.activities.start(key, "ordinary"); f.activities.register(away(d, true, { eligible: true, currentRun: { id: "helped", startedAt: 1000 } })); await f.tick(30);
+  assert.equal(f.sent.at(-1)?.phase, "replied");
+  f.activities.close(); assert.equal(f.scheduled.size, 0);
+});
+
+test("a run starting long after the person left takes no row until they come back and leave again", async () => {
+  const f = fixture(timing), d = device(), key = d.activities![0].sessionKey;
+  f.activities.register(away(d, true)); await f.tick(600);
+  // A follow replaced while the phone stays away keeps the time it left.
+  f.activities.register(away(d, true, { trackingID: "8b34eddb-598a-41e0-946e-fd7d0090a124" }));
+  f.activities.start(key, "from-another-device"); await f.tick(120);
+  assert.equal(f.sent.length, 0, "a turn begun elsewhere while the phone was away isn't one they left running");
+  const replaced = { trackingID: "8b34eddb-598a-41e0-946e-fd7d0090a124" };
+  f.activities.register(away(d, false, replaced)); await f.tick(5); f.activities.register(away(d, true, replaced)); await f.tick(14);
+  assert.equal(f.sent.length, 0);
+  await f.tick(1); assert.equal(f.sent.at(-1)?.event, "start", "seen in the app, it is theirs");
+  f.activities.close(); assert.equal(f.scheduled.size, 0);
 });
 
 test("manual targets only the seeded run; wait counts resume and terminal state cannot resurrect", async () => {
@@ -118,17 +168,38 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
     let result: any;
     const call = (method: string, params = {}) => methods.get(`clawy.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
-    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.3");
+    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.5");
     const d = device(); call("register", d); await service.start({ config: {} });
+    // A forward with no answer goes once more, the same sealed body, and the device's health is that answer.
+    const forwards: string[] = [], bounds: number[] = [], ordinary = globalThis.fetch, timeout = AbortSignal.timeout;
+    let stalls = 1;
+    AbortSignal.timeout = ((ms: number) => { bounds.push(ms); const stop = new AbortController(); setImmediate(() => stop.abort(new DOMException("timed out", "TimeoutError"))); return stop.signal; }) as any;
+    globalThis.fetch = (async (url, options) => {
+      if (!String(url).includes("/v1/forward/")) return new Response(null, { status: 200 });
+      forwards.push(options!.body as string);
+      const signal = options!.signal!;
+      return stalls-- > 0 ? new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))) : new Response(null, { status: 200 });
+    }) as any;
+    try {
+      await call("test", { id: d.id, test: "nonce" });
+      assert.equal(result.status, 200); assert.equal(forwards.length, 2); assert.equal(forwards[0], forwards[1]);
+      call("status"); assert.equal(result.devices[0].delivery.status, 200);
+      // Two tries with no answer still fit the app's 15-second wait on a Send Test, and read as out of reach.
+      assert.ok(bounds.length >= 2 && bounds.every((ms) => ms * 2 < 15_000), `${bounds}`);
+      stalls = 2; await call("test", { id: d.id, test: "again" });
+      assert.equal(result.status, 0);
+      call("status"); assert.equal(result.devices[0].delivery.status, 0);
+    } finally { globalThis.fetch = ordinary; AbortSignal.timeout = timeout; }
     const fire = async (runId: string, data: any) => { event({ sessionKey: d.activities![0].sessionKey, runId, stream: "lifecycle", data }); await new Promise(setImmediate); };
     await fire("ordinary-tool", { phase: "start", startedAt: Date.now() });
     event({ sessionKey: d.activities![0].sessionKey, runId: "ordinary-tool", stream: "tool", data: { phase: "start", name: "web_fetch" } }); await new Promise(setImmediate);
-    assert.equal(posts.length, 0, "an ordinary tool does not bypass the twenty-second threshold");
+    assert.equal(posts.length, 0, "an ordinary tool does not bypass the time rule");
     event({ sessionKey: d.activities![0].sessionKey, runId: "ordinary-tool", stream: "tool", data: { phase: "start", name: "sessions_spawn" } }); await new Promise(setImmediate);
     assert.equal(posts.at(-1).body.event, "start", "an explicit helper spawn qualifies early");
     await fire("ordinary-tool", { phase: "end", terminalReply: { disposition: "silent" } }); posts.length = 0;
-    d.activities![0].eligible = true; call("register", d);
-    await fire("silent", { phase: "start", startedAt: Date.now() });
+    // The app's hint arrives with the run it describes, and covers that run alone.
+    const hinted = async (runId: string, data: any) => { await fire(runId, data); call("register", { ...d, activities: [{ ...d.activities![0], eligible: true, currentRun: { id: runId, startedAt: Date.now() / 1000 } }] }); await new Promise(setImmediate); };
+    await hinted("silent", { phase: "start", startedAt: Date.now() });
     await fire("silent", { phase: "end", yielded: true }); assert.equal(posts.filter(p => p.body.event === "end").length, 0);
     await fire("silent-announce", { phase: "start" }); assert.equal(posts.filter(p => p.body.event === "end").length, 0, "the yielded parent's announce carries its row on");
     await fire("silent-announce", { phase: "end", terminalReply: { disposition: "silent" } }); assert.equal(posts.at(-1).body.phase, "replied");
@@ -142,9 +213,9 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     await fire("announce:v1:agent:a:subagent:x:child-run", { phase: "model" }); await fire("announce:v1:agent:a:subagent:x:child-run", { phase: "end" });
     assert.equal(posts.filter(p => p.body.event === "end").length, ends + 1); assert.equal(posts.at(-1).body.phase, "replied");
     hooks.get("subagent_ended")({ targetSessionKey: "agent:a:subagent:x" }, { requesterSessionKey: d.activities![0].sessionKey });
-    await fire("abort", { phase: "start" }); await fire("abort", { phase: "end", aborted: true }); assert.equal(posts.at(-1).body.phase, "stopped");
-    await fire("error", { phase: "start" }); await fire("error", { phase: "error" }); assert.equal(posts.at(-1).body.phase, "failed");
-    await fire("wait", { phase: "start" }); observers[0].onEvent({ event: "exec.approval.requested", payload: { id: "a", request: { sessionKey: d.activities![0].sessionKey, command: "private" } } }); await new Promise(setImmediate);
+    await hinted("abort", { phase: "start" }); await fire("abort", { phase: "end", aborted: true }); assert.equal(posts.at(-1).body.phase, "stopped");
+    await hinted("error", { phase: "start" }); await fire("error", { phase: "error" }); assert.equal(posts.at(-1).body.phase, "failed");
+    await hinted("wait", { phase: "start" }); observers[0].onEvent({ event: "exec.approval.requested", payload: { id: "a", request: { sessionKey: d.activities![0].sessionKey, command: "private" } } }); await new Promise(setImmediate);
     assert.equal(posts.at(-1).body.phase, "needsYou"); assert.equal(posts.filter(p => p.body.sealed).length, 0);
     observers[0].onEvent({ event: "exec.approval.resolved", payload: { id: "a" } }); await new Promise(setImmediate); assert.equal(posts.at(-1).body.phase, "working");
     const normal = posts.filter(p => p.body.sealed).length;

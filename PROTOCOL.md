@@ -86,7 +86,10 @@ The forwarder accepts a sealed body of exactly 2867 base64url characters and not
 | 404 | No such route on this forwarder | Keeps the device: it says nothing about it |
 | 413, 400 | Malformed | Logs it, a bug |
 | 429 | Over the device's rate limit | Drops this push, honoring `Retry-After` if it retries |
-| 502 | APNs refused or failed | May retry once |
+| 502 | APNs refused, failed or didn't answer within 4 seconds | Retries once |
+| None | A timeout or a dropped connection | Retries once |
+
+A plugin waits at least 5 seconds for an answer. A retry sends the same sealed body and `seq`, so if the first did reach the device, the second can't open there and shows as a bare "Clawy / New notification": a rare extra alert, traded for one that would otherwise be lost.
 
 ## Health
 
@@ -136,7 +139,7 @@ Plugin version 0.3.0 advertises `liveActivities: 2` in status. The registration 
 }]
 ```
 
-`trackingID` is a UUID; an entry missing from the next registration ends its row as stopped, and a replaced tracking id is a new target. Entries qualify, update and end independently. `currentRun` is optional and seeds an already running native turn. Hermes requires the actual `turn_id`, not its transcript row id. `manual` starts immediately for that explicit current run only. `long` starts while backgrounded once a run reaches 20 seconds. OpenClaw can qualify earlier from the app's `eligible` hint for progress-card steps/helpers/background tasks, a native subagent event, or an explicit sessions_spawn tool. Ordinary tools never qualify early. Hermes uses the time rule alone, ignoring early-eligibility hints. Unrelated sessions never qualify. Updating backgrounded or eligible can qualify an observed run. A terminal run stays terminal; a later native run can qualify in long mode.
+`trackingID` is a UUID; an entry missing from the next registration ends its row as stopped, and a replaced tracking id is a new target. Entries qualify, update and end independently. `currentRun` is optional and seeds an already running native turn. Hermes requires the actual `turn_id`, not its transcript row id. `manual` starts immediately for that explicit current run only. `long` starts while backgrounded once a run has worked 60 seconds and the device has been backgrounded for 15, counted on the gateway's clock from when the plugin first heard any of the device's entries say `backgrounded: true` (an entry added or replaced meanwhile keeps that time); a run the plugin first learned of more than 120 seconds after that never qualifies until the device registers foreground and then backgrounded again. OpenClaw can qualify earlier, skipping both times, from a native subagent event, an explicit sessions_spawn tool, or the app's `eligible` hint (a working helper, or progress-card steps or a background task from the live run), which applies only to the run its `currentRun` names, or, with none named, to a row held for the session's helpers; never to the session's later runs. Ordinary tools never qualify early. Hermes uses the time rule alone, ignoring early-eligibility hints. Unrelated sessions never qualify. Updating backgrounded or eligible can qualify an observed run. A terminal run stays terminal; a later native run can qualify in long mode.
 
 The plugin derives `runID` as lowercase SHA256 hex of the UTF-8 native id. It forwards to the fixed origin's `/v1/activity/<deviceID>` with the existing forward bearer token, independently of the sealed route:
 

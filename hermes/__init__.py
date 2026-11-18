@@ -11,7 +11,7 @@ from .activity import Activities
 from .cron import CronDelivery, adapter as cron_adapter
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.4.0"
+VERSION = "0.4.2"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 

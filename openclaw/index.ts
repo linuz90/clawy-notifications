@@ -11,7 +11,7 @@ import { fit, seal } from "./seal.ts";
 import { Activities } from "./activity.ts";
 import { registerDeviceTools } from "./device-tools.ts";
 
-const VERSION = "0.4.3";
+const VERSION = "0.4.5";
 /** Bumped whenever a device needs something new from this plugin. PROTOCOL.md. */
 const PROTOCOL = 2;
 
@@ -44,7 +44,8 @@ export default definePluginEntry({
         headers: { authorization: `Bearer ${device.token}`, "content-type": "application/json" },
         body: JSON.stringify({ kind: message.kind === "refresh" ? "silent" : "alert", sealed }),
         redirect: "error", // A forward token never goes to another URL.
-        signal: AbortSignal.timeout(10_000),
+        // The relay answers within about 4 s; two tries stay inside the app's 15 s wait on a Send Test.
+        signal: AbortSignal.timeout(7_000),
       });
       const note = (status: number) => {
         // Silent pushes may be dropped by iOS as it likes, so only alerts say how the route is doing.
@@ -52,8 +53,10 @@ export default definePluginEntry({
       };
       let response: Response;
       try {
-        response = await post();
-        if (response.status === 502) response = await post();
+        // One more try after a 502 (APNs failed) or no answer at all (a timeout, a dropped connection).
+        // It's the same sealed body and seq, so the device opens it once even if both arrive.
+        const first = await post().catch(() => undefined);
+        response = first && first.status !== 502 ? first : await post();
       } catch (error) {
         note(0);
         throw error;

@@ -42,10 +42,18 @@ def activities_registration(value):
 
 
 class Activities:
-    def __init__(self, devices, delivery, now=time.time, timer=threading.Timer, threshold=20, cap=8 * 3600):
+    """Long mode, by time alone: a run shows once it has worked `threshold` seconds and still works
+    `settle` seconds after the person left, so an ordinary turn that ends soon after gets only its
+    reply's notification. A run starting more than `window` seconds after they left (a turn begun on
+    another device, a later delivery) isn't one they left running."""
+
+    def __init__(self, devices, delivery, now=time.time, timer=threading.Timer, threshold=60, settle=15, window=120, cap=8 * 3600):
         self.devices, self.delivery = devices, delivery
-        self.now, self.timer, self.threshold, self.cap = now, timer, threshold, cap
+        self.now, self.timer, self.threshold, self.settle, self.window, self.cap = now, timer, threshold, settle, window, cap
         self.targets, self.runs, self.waits = {}, {}, {}
+        # When each device was first heard away this time, by device id: a follow added or replaced
+        # while it stays away doesn't start the count again.
+        self.away = {}
         self.lock = threading.RLock()
         self.closed = False
         self.observing = False
@@ -67,6 +75,17 @@ class Activities:
                     if target["announced"]:
                         self._emit(target, "end", "stopped")
                     del self.targets[identity]
+            # A worker that wasn't observing yet when the phone left hears it late: the registration
+            # file was last written no later than that, so its time stands in when it's earlier.
+            try:
+                written = self.devices.file.stat().st_mtime
+            except OSError:
+                written = None
+            for device in self.devices.all():
+                if not any(follow["backgrounded"] for follow in device.get("activities", [])):
+                    self.away.pop(device["id"], None)
+                elif device["id"] not in self.away:
+                    self.away[device["id"]] = min(self.now(), written) if written is not None else self.now()
             sessions = {follow["sessionKey"] for _, follow in records.values()}
             self.runs = {key: run for key, run in self.runs.items() if key in sessions or (not run["ended"] and self.now() - run["startedAt"] < self.cap)}
             for identity, (device, follow) in records.items():
@@ -86,7 +105,8 @@ class Activities:
                 self._watch()
 
     def _run(self, id, startedAt, session):
-        return {"id": id, "startedAt": startedAt, "pending": self.waits.get(session, {}).get("ids", set()), "ended": False}
+        # "seen": when this plugin first knew of the run, on its own clock ("startedAt" can be the phone's).
+        return {"id": id, "startedAt": startedAt, "seen": self.now(), "pending": self.waits.get(session, {}).get("ids", set()), "ended": False}
 
     def start(self, session, identity):
         if not session or not identity:
@@ -245,9 +265,14 @@ class Activities:
             return
         if not manual and not follow["backgrounded"]:
             return
-        if not manual and age < self.threshold:
-            self._later(target, self.threshold - age, lambda: self._qualify(target))
-            return
+        if not manual:
+            away_at = self.away.get(target["device"]["id"], self.now())
+            if run["seen"] > away_at + self.window:
+                return
+            remaining = max(self.threshold - age, self.settle - (self.now() - away_at))
+            if remaining > 0:
+                self._later(target, remaining, lambda: self._qualify(target))
+                return
         target["announced"] = True
         self._emit(target, "start", "needsYou" if run["pending"] else "working")
         def cap():
@@ -298,5 +323,6 @@ class Activities:
                 self._clear(target)
             self.targets.clear()
             self.runs.clear()
+            self.away.clear()
             for key in list(self.waits):
                 self._forget_waits(key)

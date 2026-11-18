@@ -27,11 +27,19 @@ export function parseActivities(value     )                                     
  * every turn it has covered. A turn that ends with the chat's helpers still working, or yielded to
  * them, leaves the row `held`, and the chat's next turn (the helpers' announce) carries it on under
  * the same `id`. */
+/** `seenAt`: when this plugin first knew of the row's run, on its own clock (`startedAt` can be the
+ * phone's). */
+
+/** `eligibleRun`: the run the app's `eligible` hint was sent with; it says nothing about the chat's
+ * later runs. */
 
 
-
-/** `grace`: how long a held row waits, after its chat's last helper ends, for the announce turn. */
-const clock        = { now: () => Date.now() / 1000, later: setTimeout, cancel: clearTimeout, threshold: 20, cap: 8 * 3600, grace: 60 };
+/** Long mode, by time alone: a run shows once it has worked `threshold` seconds and still works
+ * `settle` seconds after the person left, so an ordinary turn that ends soon after gets only its
+ * reply's notification. A run starting more than `window` seconds after they left (a turn begun on
+ * another device, a later delivery) isn't one they left running. `grace`: how long a held row
+ * waits, after its chat's last helper ends, for the announce turn. */
+const clock        = { now: () => Date.now() / 1000, later: setTimeout, cancel: clearTimeout, threshold: 60, settle: 15, window: 120, cap: 8 * 3600, grace: 60 };
 
 export class Activities {
           targets = new Map                ();
@@ -39,6 +47,9 @@ export class Activities {
           waits = new Map                                                                    ();
   /** Helper sessions still working, by the session that spawned them, since the first started. */
           helpers = new Map                                                                                   ();
+  /** When each device was first heard away this time, by device id: a follow added or replaced while
+   * it stays away doesn't start the count again. */
+          away = new Map                ();
           closed = false;
           next              ;
           post                                                   ;
@@ -48,6 +59,8 @@ export class Activities {
   /** Each followed chat is a target of its own; a chat the device no longer follows ends its row. */
   register(device        ) {
     const follows = device.activities ?? [];
+    if (!follows.some(follow => follow.backgrounded)) this.away.delete(device.id);
+    else if (!this.away.has(device.id)) this.away.set(device.id, this.time.now());
     for (const target of [...this.targets.values()]) {
       if (target.device.id === device.id && !follows.some(f => f.trackingID === target.follow.trackingID && f.sessionKey === target.follow.sessionKey)) this.drop(target);
     }
@@ -61,6 +74,7 @@ export class Activities {
         if (follow.currentRun && (!old.run || (old.run.ended && !old.run.turns.has(follow.currentRun.id) && follow.currentRun.startedAt >= old.run.startedAt))) {
           this.start(follow.sessionKey, follow.currentRun.id, follow.currentRun.startedAt);
         }
+        old.eligibleRun = hinted(follow, old.run);
         this.qualify(old);
         continue;
       }
@@ -68,15 +82,17 @@ export class Activities {
       this.targets.set(key, target);
       let run = this.runs.get(follow.sessionKey);
       if (!run && follow.currentRun) {
-        run = { ...follow.currentRun, native: follow.currentRun.id, turns: new Set([follow.currentRun.id]), eligible: false, pending: this.waits.get(follow.sessionKey)?.ids ?? new Set(), ended: false, held: false };
+        run = { ...follow.currentRun, native: follow.currentRun.id, turns: new Set([follow.currentRun.id]), seenAt: this.time.now(), eligible: false, pending: this.waits.get(follow.sessionKey)?.ids ?? new Set(), ended: false, held: false };
         this.runs.set(follow.sessionKey, run);
       }
       run ??= this.heldForHelpers(follow.sessionKey);
       target.run = run;
+      target.eligibleRun = hinted(follow, run);
       this.qualify(target);
     }
   }
   remove(id        ) {
+    this.away.delete(id);
     for (const target of [...this.targets.values()]) if (target.device.id === id) this.drop(target);
   }
           drop(target        ) {
@@ -98,7 +114,7 @@ export class Activities {
       this.forgetWaits(session);
       this.time.cancel(run.grace);
     }
-    run = { id, native: id, turns: new Set([id]), startedAt, eligible: false, pending: this.waits.get(session)?.ids ?? new Set(), ended: false, held: false };
+    run = { id, native: id, turns: new Set([id]), startedAt, seenAt: this.time.now(), eligible: false, pending: this.waits.get(session)?.ids ?? new Set(), ended: false, held: false };
     this.runs.set(session, run);
     for (const target of this.targets.values()) if (target.follow.sessionKey === session) {
       this.clear(target);
@@ -166,7 +182,7 @@ export class Activities {
     const helpers = this.helpers.get(session);
     if (!helpers?.ids.size) return undefined;
     const id = `helpers\n${session}\n${helpers.since}`;
-    const run      = { id, native: id, turns: new Set([id]), startedAt: helpers.since, eligible: true, pending: this.waits.get(session)?.ids ?? new Set(), ended: false, held: true };
+    const run      = { id, native: id, turns: new Set([id]), startedAt: helpers.since, seenAt: helpers.since, eligible: true, pending: this.waits.get(session)?.ids ?? new Set(), ended: false, held: true };
     this.runs.set(session, run);
     return run;
   }
@@ -237,8 +253,12 @@ export class Activities {
     const manual = follow.mode === "manual" && !!follow.currentRun && run.turns.has(follow.currentRun.id);
     if (follow.mode === "manual" && !manual) return;
     if (!manual && !follow.backgrounded) return;
-    const remaining = this.time.threshold - (this.time.now() - run.startedAt);
-    if (!manual && !follow.eligible && !run.eligible && remaining > 0) {
+    const awayAt = this.away.get(target.device.id) ?? this.time.now();
+    if (!manual && run.seenAt > awayAt + this.time.window) return;
+    // A helper, a spawn or the app's hint for this run says it's long already; time decides the rest.
+    const early = run.eligible || (follow.eligible && target.eligibleRun === run);
+    const remaining = early ? 0 : Math.max(this.time.threshold - (this.time.now() - run.startedAt), this.time.settle - (this.time.now() - awayAt));
+    if (!manual && remaining > 0) {
       target.timer = this.time.later(() => { if (this.targets.get(target.key) === target && target.run === run) this.qualify(target); }, remaining * 1000);
       target.timer.unref?.();
       return;
@@ -281,6 +301,7 @@ export class Activities {
   }
   close() {
     this.closed = true;
+    this.away.clear();
     for (const target of this.targets.values()) this.clear(target);
     this.targets.clear();
     for (const run of this.runs.values()) this.time.cancel(run.grace);
@@ -288,6 +309,14 @@ export class Activities {
     for (const key of this.waits.keys()) this.forgetWaits(key);
     for (const key of this.helpers.keys()) this.forgetHelpers(key);
   }
+}
+
+/** The run an `eligible` hint speaks for: the one it names, or with no run named (the app's turn
+ * ended), a row held for the chat's helpers. A late registration naming an earlier run never hands
+ * its hint to the run going now. */
+function hinted(follow                , run                 )                  {
+  if (!follow.eligible || !run) return undefined;
+  return (follow.currentRun ? run.turns.has(follow.currentRun.id) : run.held) ? run : undefined;
 }
 
 export async function forwardActivity(device        , event               )                   {

@@ -266,6 +266,12 @@ class Delivery:
             except urllib.error.HTTPError as error:
                 code = error.code
                 error.close()
+            except OSError:
+                # No answer at all (a timeout, a dropped connection): one more try, as after a 502.
+                # Same body and seq, so the device opens it once even if both arrive.
+                if attempt == 0:
+                    continue
+                raise
             # 404 stays: that's a forwarder without this route, which says nothing about the device.
             if code in (401, 410):
                 self.devices.change(remove=device)

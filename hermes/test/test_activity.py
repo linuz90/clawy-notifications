@@ -62,7 +62,9 @@ class ActivityTests(unittest.TestCase):
         def submit(device, event, callback):
             self.events.append(event)
             callback(True)
-        self.activities = Activities(self.devices, SimpleNamespace(submit_activity=submit), now=lambda: self.clock.now, timer=self.clock.timer)
+        # Most tests keep the time rule alone (20 s, no settle, no window); the long-mode test sets the rest.
+        self.activities = Activities(self.devices, SimpleNamespace(submit_activity=submit), now=lambda: self.clock.now, timer=self.clock.timer,
+                                     threshold=20, settle=0, window=float("inf"))
         self.activities.observing = True
         self.activities.sync()
 
@@ -277,6 +279,39 @@ class ActivityTests(unittest.TestCase):
         self.activities.start(SESSION, "next")
         self.clock.tick(30)
         self.assertEqual(len(self.events), count)
+
+    def background(self, backgrounded):
+        self.device["activities"][0]["backgrounded"] = backgrounded
+        self.devices.change(device=self.device)
+        self.activities.sync()
+
+    def test_long_mode_needs_a_long_run_still_working_after_leaving(self):
+        self.activities.threshold, self.activities.settle, self.activities.window = 60, 15, 120
+        self.background(False)
+        self.activities.start(SESSION, "ordinary")
+        self.clock.tick(50)
+        self.background(True)
+        self.clock.tick(5)
+        self.assertEqual(self.events, [], "a turn already past the threshold waits for the person to have been away a while")
+        self.activities.end(SESSION, "ordinary", "replied")
+        self.activities.start(SESSION, "long")
+        self.clock.tick(59)
+        self.assertEqual(self.events, [], "a minute of work makes a run long")
+        self.clock.tick(1)
+        self.assertEqual(self.events[-1]["event"], "start")
+        self.activities.end(SESSION, "long", "replied")
+        self.clock.tick(600)
+        # A follow replaced while the phone stays away keeps the time it left.
+        self.device["activities"][0]["trackingID"] = "8b34eddb-598a-41e0-946e-fd7d0090a124"
+        self.background(True)
+        self.activities.start(SESSION, "from-another-device")
+        self.clock.tick(120)
+        self.assertEqual(self.events[-1]["phase"], "replied", "a turn begun long after the person left isn't theirs")
+        self.background(False)
+        self.background(True)
+        self.clock.tick(15)
+        self.assertEqual(self.events[-1]["event"], "start", "seen in the app, it is theirs")
+        self.activities.end(SESSION, "from-another-device", "replied")
 
     def test_time_qualification_replacement_stale_timer_and_cap(self):
         self.activities.start(SESSION, "run")
