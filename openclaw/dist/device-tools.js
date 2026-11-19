@@ -97,9 +97,14 @@ const definitions               = [
   },
 ];
 
+/** A connected Clawy device on its node connection, rather than OpenClaw's own apps, which share its client ids. */
+export function isClawyNode(node      )          {
+  return node.connected === true && ["openclaw-ios", "openclaw-macos"].includes(node.clientId ?? "") && node.clientMode === "node"
+    && (node.commands ?? []).some(command => command.startsWith("clawy."));
+}
+
 function target(nodes        , family        , command        , nodeId         )       {
-  const matching = nodes.filter(node => node.connected === true && ["openclaw-ios", "openclaw-macos"].includes(node.clientId ?? "") && node.clientMode === "node"
-    && node.deviceFamily === family && node.commands?.includes(command));
+  const matching = nodes.filter(node => isClawyNode(node) && node.deviceFamily === family && node.commands?.includes(command));
   const selected = nodeId === undefined ? matching : matching.filter(node => node.nodeId === nodeId);
   if (selected.length === 0) throw new Error(`Open Clawy on the ${family}${typeof nodeId === "string" ? ` (${nodeId})` : ""} and enable Share with Agents for this gateway, then try again.`);
   if (selected.length > 1) throw new Error(`More than one Clawy ${family} is connected. Ask the user which device to use and pass its nodeId: ${selected.map(node => `${node.displayName ?? family} (${node.nodeId})`).join(", ")}.`);

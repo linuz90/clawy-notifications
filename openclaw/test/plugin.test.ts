@@ -5,8 +5,8 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canRegister, forwarderOrigin, parseDevice, Sequence } from "../devices.ts";
-import { approvalMessage, automationPostMessage, failedJobMessage, injectedMessage, questionMessage, replyMessage } from "../route.ts";
+import { canRegister, forwarderOrigin, maxMuted, parseDevice, Sequence } from "../devices.ts";
+import { approvalMessage, automationPostMessage, failedJobMessage, injectedMessage, inUseElsewhere, questionMessage, replyMessage, requestHoldMs, forDevice, whileInUseElsewhere } from "../route.ts";
 import { fit, PADDED_LENGTH, seal } from "../seal.ts";
 
 // An independent opener, written from RFC 8291, so the test doesn't check seal.ts against itself.
@@ -156,6 +156,99 @@ test("a device is checked before it's stored", () => {
   assert.equal(parseDevice({ ...good, p256dh: "short" }), null);
   assert.equal(parseDevice({ ...good, auth: "short" }), null);
   assert.equal(parseDevice(null), null);
+});
+
+test("a reply in a chat the device muted goes out silent; what waits on the person still alerts", () => {
+  const reply = { v: 2 as const, kind: "reply" as const, body: "Done", sessionKey: "agent:juno:ios-native-1", agentId: "juno" };
+  const muted = { "agent:juno:ios-native-1": 0, "agent:juno:ios-native-2": 2_000 };
+  assert.deepEqual(forDevice(reply, muted, 1_000), { v: 2, kind: "refresh", sessionKey: "agent:juno:ios-native-1", agentId: "juno" });
+  assert.equal(forDevice({ ...reply, sessionKey: "agent:juno:ios-native-2" }, muted, 1_000).kind, "refresh");
+  // A mute that's over, another chat, or a device that muted nothing: as ever.
+  assert.equal(forDevice({ ...reply, sessionKey: "agent:juno:ios-native-2" }, muted, 2_000).kind, "reply");
+  assert.equal(forDevice({ ...reply, sessionKey: "agent:juno:ios-native-3" }, muted, 1_000).kind, "reply");
+  // A guest's reply is muted with the chat it was tagged into.
+  assert.equal(forDevice({ ...reply, sessionKey: "agent:atlas:ios-native-1-guest-of-juno" }, muted, 1_000).kind, "refresh");
+  assert.equal(forDevice(reply, undefined), reply);
+  for (const kind of ["approval", "question"] as const) assert.equal(forDevice({ ...reply, kind }, muted, 1_000).kind, kind);
+  // A test alert always shows, so Send Test can pass.
+  assert.equal(forDevice({ ...reply, test: "n" }, muted, 1_000).kind, "reply");
+});
+
+test("a reply goes out silent while Clawy was used more recently on another of the person's devices", () => {
+  const reply = { v: 2 as const, kind: "reply" as const, body: "Done", sessionKey: "agent:juno:ios-native-1", agentId: "juno" };
+  const iphone = { gatewayDevice: "iphone", person: "gateway-owner" };
+  const now = 1_000_000;
+  // As `system-presence` lists an app that said it's in use `secondsAgo` before now (seen on 2026.11.3).
+  const used = (deviceId: string, secondsAgo: number, more: Record<string, unknown> = {}) =>
+    ({ clientId: "openclaw-macos", deviceId, user: { id: "gateway-owner" }, connectionLastActivityAt: now - secondsAgo * 1000, ...more });
+  const quiet = (presence: any[] | undefined, device: { gatewayDevice?: string; person?: string } = iphone, message = reply) =>
+    whileInUseElsewhere(message, device, presence, now).kind === "refresh";
+  assert.deepEqual(whileInUseElsewhere(reply, iphone, [used("mac", 20)], now), { v: 2, kind: "refresh", sessionKey: "agent:juno:ios-native-1", agentId: "juno" });
+  // An iPhone on its chat list declares a chat open on another iPad: that counts too.
+  assert.ok(quiet([{ clientId: "openclaw-ios", deviceId: "ipad", watchedSessions: ["agent:juno:ios-native-2"] }]));
+  // Walked away, the connection closed, someone else's Mac, a browser tab, or this iPhone's own other entries: it alerts.
+  assert.ok(!quiet([used("mac", 150)]));
+  assert.ok(!quiet([used("mac", 5, { reason: "disconnect" })]));
+  assert.ok(!quiet([used("mac", 5, { user: { id: "frank" } })]));
+  assert.ok(!quiet([used("web", 5, { clientId: "openclaw-control-ui" })]));
+  assert.ok(!quiet([used("iphone", 100)]));
+  // Two in use: the one used most recently by over a beat alerts, and within a beat both do.
+  assert.ok(!quiet([used("mac", 5), used("iphone", 3, { clientId: "openclaw-ios" })]));
+  assert.ok(!quiet([used("mac", 5), used("iphone", 30, { clientId: "openclaw-ios" })]));
+  assert.ok(quiet([used("mac", 5), used("iphone", 50, { clientId: "openclaw-ios" })]));
+  // This iPhone left Clawy a moment ago: still the one used last, so an older Mac doesn't quiet it.
+  assert.ok(!quiet([used("mac", 60), used("iphone", 5, { clientId: "openclaw-ios", reason: "disconnect" })]));
+  // A tie alerts on both; two apps too old to stamp, each showing a chat, are a tie.
+  assert.ok(!quiet([used("mac", 5), used("iphone", 5, { clientId: "openclaw-ios" })]));
+  assert.ok(!quiet([{ clientId: "openclaw-ios", deviceId: "iphone", watchedSessions: ["a"] }, { clientId: "openclaw-ios", deviceId: "ipad", watchedSessions: ["b"] }]));
+  // A list with junk in it reads past the junk.
+  assert.ok(quiet([null, used("mac", 5)]));
+  // A reply judged and still sent says so, so the device doesn't judge again on stamps that moved.
+  assert.equal(whileInUseElsewhere(reply, iphone, [], now).chosen, true);
+  assert.equal(whileInUseElsewhere(reply, {}, [used("mac", 5)], now).chosen, undefined);
+  assert.equal(whileInUseElsewhere(reply, iphone, undefined, now).chosen, undefined);
+  // A device registered before the plugin knew its gateway id, or a list that couldn't be read.
+  assert.ok(!quiet([used("mac", 5)], {}));
+  assert.ok(!quiet(undefined));
+  // What waits on the person, and a test alert, always alert.
+  for (const kind of ["approval", "question", "task-failed"] as const) assert.ok(!quiet([used("mac", 5)], iphone, { ...reply, kind }));
+  assert.ok(!quiet([used("mac", 5)], iphone, { ...reply, test: "n" }));
+});
+
+test("an approval or a question waits a minute for the device in use, less when it lapses sooner", () => {
+  const now = 1_000_000;
+  // A command's approval lasts thirty minutes, a question fifteen, a plugin's permission request two.
+  assert.equal(requestHoldMs(now + 30 * 60_000, now), 60_000);
+  assert.equal(requestHoldMs(now + 120_000, now), 40_000);
+  assert.equal(requestHoldMs(undefined, now), 60_000);
+  assert.equal(requestHoldMs(now - 1, now), 0);
+  // Held only for a device another is ahead of: the same judgment as a reply's.
+  const mac = [{ clientId: "openclaw-macos", deviceId: "mac", connectionLastActivityAt: now - 5_000 }];
+  assert.equal(inUseElsewhere({ gatewayDevice: "iphone" }, mac, now), true);
+  assert.equal(inUseElsewhere({ gatewayDevice: "mac" }, mac, now), false);
+  assert.equal(inUseElsewhere({}, mac, now), false);
+  assert.equal(inUseElsewhere({ gatewayDevice: "iphone" }, undefined, now), false);
+});
+
+test("a device keeps which app registered it, and nothing else of the kind", () => {
+  const { p256dh, authText } = keys();
+  const good = { id: "abc_-1", forwarder: `${forwarderOrigin()}/v1/forward/abc_-1`, token: "t", p256dh, auth: authText };
+  const stored = parseDevice({ ...good, gatewayDevice: "a1b2", person: "gateway-owner" });
+  assert.equal(stored?.gatewayDevice, "a1b2");
+  assert.equal(stored?.person, "gateway-owner");
+  assert.equal(parseDevice({ ...good, gatewayDevice: 7 })?.gatewayDevice, undefined);
+  assert.equal(parseDevice({ ...good, gatewayDevice: "x".repeat(300) })?.gatewayDevice, undefined);
+});
+
+test("a device's muted chats are checked before they're stored", () => {
+  const { p256dh, authText } = keys();
+  const good = { id: "abc_-1", forwarder: `${forwarderOrigin()}/v1/forward/abc_-1`, token: "t", p256dh, auth: authText };
+  assert.deepEqual(parseDevice({ ...good, muted: { "agent:juno:ios-native-1": 0 } })?.muted, { "agent:juno:ios-native-1": 0 });
+  assert.equal(parseDevice({ ...good, muted: {} })?.muted, undefined);
+  for (const muted of [[], { "juno:1": 0 }, { "agent:juno:1": -1 }, { "agent:juno:1": "0" },
+                       Object.fromEntries(Array.from({ length: maxMuted + 1 }, (_, i) => [`agent:juno:${i}`, 0]))]) {
+    assert.equal(parseDevice({ ...good, muted }), null, JSON.stringify(muted).slice(0, 40));
+  }
 });
 
 test("adding a device takes the right to see what it will get", () => {

@@ -49,7 +49,7 @@ test("the fixed catalog survives no devices, connection, disconnection and shari
   assert.deepEqual(snapshot(), offline);
   assert.equal(h.lists, 0, "neither registration nor the tool factory reads inventory");
   const manifest = JSON.parse(readFileSync(new URL("../../openclaw.plugin.json", import.meta.url), "utf8"));
-  assert.deepEqual(manifest.contracts.tools, h.names);
+  assert.deepEqual(manifest.contracts.tools, [...h.names, "clawy_guide"]);
 });
 
 test("device capability status is explicit and read-only", () => {

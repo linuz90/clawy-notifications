@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock as nodeMock, test } from "node:test";
 import { createECDH, createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,10 +15,10 @@ function device(overrides = {}): Device {
   return { v: 2, id: "one", forwarder: "https://openclaw-client-relay.linuz90.workers.dev/v1/forward/one", token: "fake", p256dh: key.getPublicKey().toString("base64url"), auth: Buffer.alloc(16).toString("base64url"), activities: [{ trackingID, sessionKey: "agent:a:ios-native-one", mode: "long", backgrounded: true, eligible: false, ...overrides }] };
 }
 /** Older tests keep the time rule alone (20 s, no settle, no window); `timing` sets the rest. */
-function fixture(timing: { threshold?: number; settle?: number; window?: number } = {}) {
+function fixture(timing: { threshold?: number; settle?: number; quick?: number; window?: number } = {}) {
   let now = 1000, seq = 0;
   const scheduled = new Set<any>(), sent: ActivityEvent[] = [];
-  const time = { now: () => now, threshold: 20, settle: 0, window: Infinity, ...timing, cap: 8 * 3600, grace: 60,
+  const time = { now: () => now, threshold: 20, settle: 0, quick: 0, window: Infinity, ...timing, cap: 8 * 3600, grace: 60,
     later: ((fn: () => void, delay: number) => { const token = { fn, due: now + delay / 1000, unref() {} }; scheduled.add(token); return token; }) as any,
     cancel: ((token: any) => scheduled.delete(token)) as any };
   const activities = new Activities(() => ++seq, async (_, e) => { sent.push(e); return true; }, time);
@@ -52,7 +52,7 @@ test("long mode ignores quick, unrelated and foreground runs; background registr
   f.activities.register({ ...d, activities: undefined }); const count = f.sent.length; stale.fn(); await f.tick(30); assert.equal(f.sent.length, count); assert.equal(f.scheduled.size, 0); f.activities.close();
 });
 
-const timing = { threshold: 60, settle: 15, window: 120 };
+const timing = { threshold: 60, settle: 15, quick: 5, window: 120 };
 const away = (d: Device, backgrounded: boolean, extra = {}) => ({ ...d, activities: [{ ...d.activities![0], backgrounded, ...extra }] });
 
 test("long mode shows a run still working a while after the person left, never an ordinary turn they leave near its end", async () => {
@@ -74,8 +74,9 @@ test("long mode shows a run still working a while after the person left, never a
 
 test("the app's early hint covers the run it was sent with, not the chat's later runs", async () => {
   const f = fixture(timing), d = device(), key = d.activities![0].sessionKey;
-  f.activities.register(away(d, true, { eligible: true, currentRun: { id: "helped", startedAt: 1000 } })); await f.tick();
-  assert.equal(f.sent.at(-1)?.event, "start", "a run with a helper or progress card shows at once");
+  f.activities.register(away(d, true, { eligible: true, currentRun: { id: "helped", startedAt: 1000 } })); await f.tick(4);
+  assert.equal(f.sent.length, 0, "even a run known to be long waits a moment, in case it ends as the person leaves");
+  await f.tick(1); assert.equal(f.sent.at(-1)?.event, "start", "a run with a helper or progress card shows almost at once");
   f.activities.end(key, "helped", "replied"); await f.tick();
   f.activities.start(key, "later"); await f.tick(30);
   assert.equal(f.sent.at(-1)?.phase, "replied", "a later run of the chat waits for the time rule");
@@ -84,6 +85,23 @@ test("the app's early hint covers the run it was sent with, not the chat's later
   // A registration naming an earlier run, late, doesn't hand its hint to the run going now.
   f.activities.start(key, "ordinary"); f.activities.register(away(d, true, { eligible: true, currentRun: { id: "helped", startedAt: 1000 } })); await f.tick(30);
   assert.equal(f.sent.at(-1)?.phase, "replied");
+  f.activities.close(); assert.equal(f.scheduled.size, 0);
+});
+
+test("helpers that finish as the person leaves leave no card, unless their announce turn works", async () => {
+  const f = fixture(timing), d = device(), key = d.activities![0].sessionKey;
+  f.activities.register(away(d, true)); f.activities.start(key, "quiet"); f.activities.helper(key, "agent:a:subagent:one", true);
+  await f.tick(1); f.activities.end(key, "quiet", "replied");
+  await f.tick(1); f.activities.helper(key, "agent:a:subagent:one", false);
+  await f.tick(60); assert.equal(f.sent.length, 0, "nothing worked once the helper finished, and no announce came");
+  // Back in the app and away again: this time the announce turn runs.
+  f.activities.register(away(d, false)); f.activities.register(away(d, true));
+  f.activities.start(key, "told"); f.activities.helper(key, "agent:a:subagent:two", true);
+  await f.tick(1); f.activities.end(key, "told", "replied");
+  await f.tick(1); f.activities.helper(key, "agent:a:subagent:two", false);
+  await f.tick(3); assert.equal(f.sent.length, 0, "held, waiting on the announce turn");
+  f.activities.start(key, "told-announce"); await f.tick(); assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.phase], ["start", "working"]);
+  f.activities.end(key, "told-announce", "replied"); await f.tick(); assert.deepEqual([f.sent.at(-1)?.event, f.sent.at(-1)?.phase], ["end", "replied"]);
   f.activities.close(); assert.equal(f.scheduled.size, 0);
 });
 
@@ -151,7 +169,7 @@ test("activity forwarding uses fixed route, retries one sequence and never remov
 test("actual plugin registration and lifecycle hooks handle silent, abort, error and yielded parent", async () => {
   const folder = mkdtempSync(join(tmpdir(), "clawy-plugin-hooks-")), methods = new Map(), hooks = new Map(), observers: any[] = [], posts: any[] = [];
   let event: any, transcript: any, service: any;
-  const original = globalThis.fetch;
+  const original = globalThis.fetch, realDateNow = Date.now;
   const mock: any = { clients: observers, definePluginEntry: (p: any) => p };
   (globalThis as any).__clawyActivityTest = mock;
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8")
@@ -168,7 +186,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
     let result: any;
     const call = (method: string, params = {}) => methods.get(`clawy.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
-    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.5");
+    call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, "0.4.7"); assert.equal(result.mutes, 1);
     const d = device(); call("register", d); await service.start({ config: {} });
     // A forward with no answer goes once more, the same sealed body, and the device's health is that answer.
     const forwards: string[] = [], bounds: number[] = [], ordinary = globalThis.fetch, timeout = AbortSignal.timeout;
@@ -191,6 +209,8 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
       call("status"); assert.equal(result.devices[0].delivery.status, 0);
     } finally { globalThis.fetch = ordinary; AbortSignal.timeout = timeout; }
     const fire = async (runId: string, data: any) => { event({ sessionKey: d.activities![0].sessionKey, runId, stream: "lifecycle", data }); await new Promise(setImmediate); };
+    // The person has been away past the moment even a run known to be long waits.
+    const realNow = Date.now; Date.now = () => realNow() + 10_000;
     await fire("ordinary-tool", { phase: "start", startedAt: Date.now() });
     event({ sessionKey: d.activities![0].sessionKey, runId: "ordinary-tool", stream: "tool", data: { phase: "start", name: "web_fetch" } }); await new Promise(setImmediate);
     assert.equal(posts.length, 0, "an ordinary tool does not bypass the time rule");
@@ -235,7 +255,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     assert.equal(posts.at(-1).body.event, "start"); assert.equal(posts.at(-1).body.phase, "needsYou");
     observers[0].onEvent({ event: "exec.approval.resolved", payload: { id: "before-registration" } }); await new Promise(setImmediate); assert.equal(posts.at(-1).body.phase, "working");
     service.stop();
-  } finally { globalThis.fetch = original; delete (globalThis as any).__clawyActivityTest; rmSync(folder, { recursive: true }); }
+  } finally { globalThis.fetch = original; Date.now = realDateNow; delete (globalThis as any).__clawyActivityTest; rmSync(folder, { recursive: true }); }
 });
 
 test("one device follows several chats, each its own row that starts and ends on its own", async () => {
@@ -358,4 +378,158 @@ test("a chat followed afresh while only its helpers work gets a working row once
   g.activities.register({ ...d, activities: [{ ...first, trackingID: reopened.trackingID }] }); await g.tick(30);
   assert.equal(g.sent.filter(e => e.event === "start").length, 1);
   g.activities.close(); assert.equal(g.scheduled.size, 0);
+});
+
+test("a reply reaches a device silently while the person uses Clawy on another, read from presence for that reply", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "clawy-plugin-presence-")), methods = new Map(), forwards: any[] = [], reads: string[] = [];
+  let event: any, transcript: any, service: any, presence: any[] = [];
+  const original = globalThis.fetch;
+  const mock: any = { definePluginEntry: (p: any) => p, resolveGatewayAuth: () => ({}) };
+  (globalThis as any).__clawyActivityTest = mock;
+  let approvals: any, questions: any, stalls = false, stops = 0, unread = true;
+  const described: string[] = [];
+  mock.createOperatorApprovalsGatewayClient = async (options: any) => { approvals = options; return { start() {}, stop() {} }; };
+  // Each presence read signs in on its own connection and asks once; a stalled gateway never answers.
+  mock.GatewayClient = class {
+    options: any;
+    constructor(options: any) { this.options = options; if (options.onEvent) questions = options; }
+    start() { this.options.onHelloOk?.(); }
+    stop() { stops++; }
+    request(method: string, params?: any) {
+      if (method === "sessions.describe") { described.push(params?.key); return Promise.resolve({ session: { unread } }); }
+      reads.push(method);
+      return stalls ? new Promise(() => {}) : Promise.resolve(presence);
+    }
+  };
+  const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8")
+    .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__clawyActivityTest;')
+    .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__clawyActivityTest;')
+    .replace(/from "\.\/([\w-]+)\.ts"/gu, (_, name) => `from "${new URL(`../${name}.ts`, import.meta.url)}"`);
+  writeFileSync(join(folder, "plugin.mjs"), stripTypeScriptTypes(source));
+  globalThis.fetch = (async (_url, options) => { forwards.push(JSON.parse(options!.body as string)); return new Response(null, { status: 200 }); }) as any;
+  try {
+    const plugin = (await import(pathToFileURL(join(folder, "plugin.mjs")).href)).default;
+    plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on() {}, registerService: (value: any) => service = value });
+    // The iPhone registers over its own connection; a gatewayDevice it sends itself counts for nothing.
+    const iphone = { connect: { scopes: ["operator.admin"], device: { id: "iphone-gw" } }, authenticatedUserProfile: { profileId: "gateway-owner" } };
+    methods.get("clawy.notifications.register")({ params: { ...device(), activities: undefined, gatewayDevice: "spoofed" }, client: iphone, respond: (ok: boolean) => assert.ok(ok) });
+    assert.deepEqual(JSON.parse(readFileSync(join(folder, "clawy-notifications/devices.json"), "utf8")).map((d: Device) => [d.gatewayDevice, d.person]), [["iphone-gw", "gateway-owner"]]);
+    await service.start({ config: {} });
+    const reply = async (runId: string, sessionKey = "agent:a:ios-native-one") => {
+      event({ sessionKey, runId, stream: "lifecycle", data: { phase: "end", terminalReply: { disposition: "visible", text: "Done" } } });
+      for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+      return forwards.at(-1)?.kind;
+    };
+    // The Mac typed on 20 s ago: silent. Nobody elsewhere: an alert.
+    presence = [{ clientId: "openclaw-macos", deviceId: "mac-gw", user: { id: "gateway-owner" }, connectionLastActivityAt: Date.now() - 20_000 }];
+    assert.equal(await reply("one"), "silent");
+    presence = [];
+    assert.equal(await reply("two"), "alert");
+    assert.deepEqual(reads, ["system-presence", "system-presence"]);
+    // A message posted with chat.inject, which Clawy on the Mac doesn't alert for: never quieted, nor read for.
+    presence = [{ clientId: "openclaw-macos", deviceId: "mac-gw", user: { id: "gateway-owner" }, connectionLastActivityAt: Date.now() - 5_000 }];
+    transcript({ target: { sessionKey: "agent:a:ios-native-one", agentId: "a" }, messageId: "m1", message: { role: "assistant", provider: "openclaw", model: "gateway-injected", content: "Build done" } });
+    for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+    assert.equal(forwards.at(-1)?.kind, "alert");
+    assert.equal(reads.length, 2);
+    // A gateway that doesn't answer: the reply and an approval both alert once their reads give up, and the connections close.
+    stalls = true; presence = [{ clientId: "openclaw-macos", deviceId: "mac-gw", connectionLastActivityAt: Date.now() }];
+    const before = forwards.length, stopped = stops;
+    event({ sessionKey: "agent:a:ios-native-one", runId: "three", stream: "lifecycle", data: { phase: "end", terminalReply: { disposition: "visible", text: "Done" } } });
+    approvals.onEvent({ event: "exec.approval.requested", payload: { id: "a1", request: { command: "ls", sessionKey: "agent:a:ios-native-one" } } });
+    for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+    assert.equal(forwards.length, before);
+    await new Promise((done) => setTimeout(done, 2_100));
+    assert.deepEqual(forwards.slice(before).map((f) => f.kind), ["alert", "alert"]);
+    assert.equal(stops, stopped + 2);
+    // A quieted reply is held and looked at again once the Mac's use would have lapsed.
+    stalls = false;
+    nodeMock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const mac = (secondsAgo: number) => [{ clientId: "openclaw-macos", deviceId: "mac-gw", user: { id: "gateway-owner" }, connectionLastActivityAt: Date.now() - secondsAgo * 1000 }];
+      const later = async () => { nodeMock.timers.tick(150_000); for (let i = 0; i < 8; i++) await new Promise(setImmediate); };
+      const sent = forwards.length;
+      // Left the Mac without reading it: the phone gets it after all. (A chat of its own: a reply in a
+      // chat already held joins that hold, whose first deadline stands.)
+      presence = mac(10); unread = true;
+      assert.equal(await reply("four", "agent:a:ios-native-held"), "silent");
+      presence = mac(200); await later();
+      assert.deepEqual(forwards.slice(sent).map((f) => f.kind), ["silent", "alert"]);
+      // Read meanwhile, or still at the Mac: nothing more.
+      presence = mac(10);
+      assert.equal(await reply("five", "agent:a:ios-native-held"), "silent");
+      unread = false; presence = mac(200); await later();
+      unread = true; presence = mac(10);
+      assert.equal(await reply("six", "agent:a:ios-native-held"), "silent");
+      await later();
+      assert.deepEqual(forwards.slice(sent).map((f) => f.kind), ["silent", "alert", "silent", "silent"]);
+      assert.ok(described.every((key) => key === "agent:a:ios-native-held"), `${described}`);
+      // Two replies held together alert once, at the first one's deadline.
+      const pair = forwards.length;
+      presence = mac(10);
+      await reply("seven", "agent:a:ios-native-held"); await reply("eight", "agent:a:ios-native-held");
+      presence = mac(200); await later();
+      assert.deepEqual(forwards.slice(pair).map((f) => f.kind), ["silent", "silent", "alert"]);
+      // Picked up the phone before the deadline: its newer reply alerts there and then, and what was held goes.
+      const picked = forwards.length;
+      presence = mac(10);
+      await reply("nine", "agent:a:ios-native-held");
+      presence = [...mac(40), { clientId: "openclaw-ios", deviceId: "iphone-gw", user: { id: "gateway-owner" }, connectionLastActivityAt: Date.now() }];
+      assert.equal(await reply("ten", "agent:a:ios-native-held"), "alert");
+      presence = mac(200); await later();
+      assert.deepEqual(forwards.slice(picked).map((f) => f.kind), ["silent", "alert"]);
+      // An approval or a question while the Mac is in use shows there first: the phone hears only if
+      // it's still unanswered a minute on (40 s for a plugin's request, which lasts two minutes).
+      const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(setImmediate); };
+      const ask = async (id: string, kind = "exec", more = {}) => { approvals.onEvent({ event: `${kind}.approval.requested`, payload: { id, request: { command: "ls", title: "Use the camera", sessionKey: "agent:a:ios-native-held" }, ...more } }); await settle(); };
+      const asked = forwards.length;
+      presence = mac(10);
+      await ask("unanswered");
+      assert.equal(forwards.length, asked, "the phone waits while the Mac shows it");
+      nodeMock.timers.tick(59_000); await settle();
+      assert.equal(forwards.length, asked);
+      nodeMock.timers.tick(1_000); await settle();
+      assert.deepEqual(forwards.slice(asked).map((f) => f.kind), ["alert"]);
+      // Answered on the Mac: the phone never hears of it.
+      await ask("answered");
+      approvals.onEvent({ event: "exec.approval.resolved", payload: { id: "answered", decision: "allow-once" } }); await settle();
+      nodeMock.timers.tick(60_000); await settle();
+      assert.equal(forwards.length, asked + 1);
+      // A plugin's permission request, with two minutes to live.
+      await ask("short", "plugin", { expiresAtMs: Date.now() + 120_000 });
+      nodeMock.timers.tick(39_000); await settle();
+      assert.equal(forwards.length, asked + 1);
+      nodeMock.timers.tick(1_500); await settle();
+      assert.equal(forwards.length, asked + 2);
+      // A question the same way, and nobody in use means no wait at all.
+      questions.onEvent({ event: "question.requested", payload: { id: "q1", sessionKey: "agent:a:ios-native-held", questions: [{ question: "Red or blue?" }] } }); await settle();
+      assert.equal(forwards.length, asked + 2);
+      questions.onEvent({ event: "question.resolved", payload: { id: "q1" } }); await settle();
+      nodeMock.timers.tick(60_000); await settle();
+      assert.equal(forwards.length, asked + 2);
+      presence = [];
+      await ask("nobody");
+      assert.equal(forwards.length, asked + 3);
+      // Sent again by the gateway, it alerts once; one sent again once nobody's in use goes at once,
+      // and what was held for it goes with it.
+      await ask("nobody");
+      assert.equal(forwards.length, asked + 3);
+      presence = mac(10);
+      await ask("twice");
+      presence = [];
+      await ask("twice");
+      nodeMock.timers.tick(60_000); await settle();
+      assert.equal(forwards.length, asked + 4);
+      // Already lapsed when it's judged: nothing.
+      await ask("lapsed", "exec", { expiresAtMs: Date.now() - 1 });
+      assert.equal(forwards.length, asked + 4);
+      // Stopped while one is held: it never goes.
+      presence = mac(10);
+      await ask("stopped");
+      service.stop();
+      nodeMock.timers.tick(60_000); await settle();
+      assert.equal(forwards.length, asked + 4);
+    } finally { nodeMock.timers.reset(); }
+  } finally {
+    service?.stop(); globalThis.fetch = original; delete (globalThis as any).__clawyActivityTest; rmSync(folder, { recursive: true }); }
 });

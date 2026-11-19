@@ -26,7 +26,7 @@ flowchart LR
 
 **Apple and our server still know when to wake your device.** They see that a notification is on its way, and whether it's an alert or a quiet background refresh. Never what it says.
 
-**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked. It has no dependencies of its own, so you can read it.
+**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked. On both it gives agents `clawy_guide`, which returns [`guide.md`](guide.md): what people can do with their agent in Clawy, read from the plugin itself, with no request anywhere. It has no dependencies of its own, so you can read it.
 
 **It's for a gateway with one owner.** Every device registered with the plugin gets every alert.
 
@@ -51,7 +51,7 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.4.5 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.4.7 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 
@@ -76,6 +76,7 @@ If the plugin stops working, Clawy says so on its chat list. It never moves you 
 | Path | What it is |
 | --- | --- |
 | [`PROTOCOL.md`](PROTOCOL.md) | The wire format, and what our forwarder does with it |
+| [`guide.md`](guide.md) | What agents read when asked what they can do in Clawy (`clawy_guide`); `npm run build` copies it into `hermes/` |
 | [`openclaw/`](openclaw/) | The OpenClaw plugin. `dist/` is the same code with the types stripped |
 | [`hermes/`](hermes/) | The Hermes plugin |
 | [`test-vectors/`](test-vectors/) | Sealed messages and replay steps both plugins and the app are tested against |
@@ -97,5 +98,9 @@ Tested on OpenClaw `2026.10.7` and `2026.11.1`, and Hermes `v0.22.7` and `v0.23.
 ## License
 
 MIT. Reporting a security problem: [`SECURITY.md`](SECURITY.md).
+
+A device can name the chats it muted (plugin 0.4.6, `mutes: 1`): a reply in one goes out as a silent refresh instead of an alert, while approvals and questions still alert; see [the protocol](PROTOCOL.md#muted-chats).
+
+While Clawy is in use on one of your devices, the OpenClaw plugin (0.4.7) sends your other devices a silent refresh instead of a reply's alert, and if you leave that device with the reply unread, it alerts on the others two and a half minutes later. An approval or a question shows first on the device in use, and reaches the others only if it's still unanswered a minute later. It reads who is using Clawy where from your gateway's own presence list, for each reply, on your gateway: which devices and when stay there. Our forwarder and Apple see only that a reply went out as a silent refresh rather than an alert, as for a muted chat. See [the protocol](PROTOCOL.md#in-use-elsewhere).
 
 Optional Live Activities need OpenClaw plugin 0.3.0 or Hermes plugin 0.4.0 (`liveActivities: 2`). They forward generic run phase and wait counts for up to four followed chats per device, separately from sealed alerts; see [the protocol](PROTOCOL.md#live-activities-version-2). Conversation content stays on the sealed route.

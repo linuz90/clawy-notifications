@@ -1,6 +1,6 @@
 {
   "name": "clawy-notifications",
-  "version": "0.4.5",
+  "version": "0.4.7",
   "description": "Sealed push notifications for Clawy: routes alerts on your own gateway and encrypts them to your device.",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,8 @@
     "openclaw.plugin.json",
     "README.md",
     "LICENSE",
-    "PROTOCOL.md"
+    "PROTOCOL.md",
+    "guide.md"
   ],
   "openclaw": {
     "extensions": [

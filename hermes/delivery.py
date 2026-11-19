@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 import queue
+import re
 import tempfile
 import threading
 import time
@@ -27,6 +28,47 @@ def forwarder_origin():
     return os.environ.get("CLAWY_FORWARDER_ORIGIN", "https://openclaw-client-relay.linuz90.workers.dev")
 
 
+MAX_MUTED = 256
+# A registration with every chat muted: the device itself, plus each muted session key and its end.
+MAX_REGISTRATION = 64 * 1024
+
+
+def muted_registration(value):
+    """A device's muted chats: session key to when the mute ends, epoch ms, 0 for until unmuted."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or len(value) > MAX_MUTED:
+        raise ValueError("Invalid muted chats")
+    for key, until in value.items():
+        if (not isinstance(key, str) or not key.startswith("agent:") or len(key) > 512
+                or type(until) not in (int, float) or until != until or until < 0 or until == float("inf")):
+            raise ValueError("Invalid muted chats")
+    return dict(value) or None
+
+
+GUEST = re.compile(r"^agent:[^:]+:((?:ios-native-|dashboard:).*)-guest-of-([^:]+)$")
+
+
+def host_key(session_key):
+    """The chat a guest's session speaks in: a guest's reply is muted with its chat."""
+    match = GUEST.match(session_key or "")
+    return f"agent:{match.group(2)}:{match.group(1)}" if match else None
+
+
+def for_device(alert, device, now=None):
+    """A reply in a chat this device muted is sealed as a silent refresh: the app still reads it and
+    marks the chat unread, with no sound or banner. Approvals, questions and failed tasks alert."""
+    muted = device.get("muted")
+    if alert.get("kind") != "reply" or not muted or "test" in alert:
+        return alert
+    until = muted.get(alert.get("sessionKey"))
+    if until is None and host_key(alert.get("sessionKey")):
+        until = muted.get(host_key(alert.get("sessionKey")))
+    if until is None or (until != 0 and until <= (time.time() * 1000 if now is None else now)):
+        return alert
+    return {"v": 2, "kind": "refresh", "sessionKey": alert["sessionKey"], "agentId": alert.get("agentId")}
+
+
 def registration(value):
     if not isinstance(value, dict) or type(value.get("v")) is not int or value["v"] != 2:
         raise ValueError("Unsupported registration")
@@ -45,7 +87,9 @@ def registration(value):
         raise ValueError("Invalid recipient keys")
     ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public)
     activities = activities_registration(value.get("activities"))
-    return {**{key: value[key] for key in ("v", "id", "name", "forwarder", "token", "p256dh", "auth", "text")}, **({"activities": activities} if activities else {})}
+    muted = muted_registration(value.get("muted"))
+    return {**{key: value[key] for key in ("v", "id", "name", "forwarder", "token", "p256dh", "auth", "text")},
+            **({"activities": activities} if activities else {}), **({"muted": muted} if muted else {})}
 
 
 class Devices:
@@ -223,7 +267,7 @@ class Delivery:
                     if self.activity_handled(device, alert):
                         continue
                     try:
-                        self.send(device, alert)
+                        self.send(device, for_device(alert, device))
                     except Exception:
                         LOG.warning("Clawy push failed")  # Exception text can contain secrets.
             except Exception:

@@ -25,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location("clawy_test_plugin", ROOT / "__ini
 plugin = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = plugin
 SPEC.loader.exec_module(plugin)
-from clawy_test_plugin.delivery import Devices, Delivery, registration
+from clawy_test_plugin.delivery import MAX_MUTED, Devices, Delivery, for_device, registration
 from clawy_test_plugin.seal import encode, seal
 
 
@@ -67,6 +67,31 @@ def recipient(origin="http://127.0.0.1:1"):
     device = dict(v=2, id="test-device", name="Test", forwarder=url, token="throwaway",
                   p256dh=encode(public), auth=encode(bytes(range(16))), text=True)
     return private, device
+
+
+class MutedChatTests(unittest.TestCase):
+    def test_a_muted_chats_reply_goes_out_silent_and_what_waits_still_alerts(self):
+        _, device = recipient()
+        device = registration(dict(device, muted={"agent:juno:abc": 0, "agent:juno:def": 2000}))
+        reply = {"v": 2, "kind": "reply", "title": "New reply", "body": "Done", "sessionKey": "agent:juno:abc", "agentId": "juno"}
+        self.assertEqual(for_device(reply, device, now=1000), {"v": 2, "kind": "refresh", "sessionKey": "agent:juno:abc", "agentId": "juno"})
+        self.assertEqual(for_device(dict(reply, sessionKey="agent:juno:def"), device, now=1000)["kind"], "refresh")
+        self.assertEqual(for_device(dict(reply, sessionKey="agent:juno:def"), device, now=2000)["kind"], "reply")
+        self.assertEqual(for_device(dict(reply, sessionKey="agent:juno:other"), device, now=1000)["kind"], "reply")
+        guest = dict(reply, sessionKey="agent:scout:ios-native-1-guest-of-juno")
+        muted_host = registration(dict(recipient()[1], muted={"agent:juno:ios-native-1": 0}))
+        self.assertEqual(for_device(guest, muted_host, now=1000)["kind"], "refresh")
+        for kind in ("approval", "question"):
+            self.assertEqual(for_device(dict(reply, kind=kind), device, now=1000)["kind"], kind)
+        self.assertEqual(for_device(dict(reply, test="n"), device, now=1000)["kind"], "reply")
+
+    def test_muted_chats_are_checked_before_they_are_stored(self):
+        _, device = recipient()
+        self.assertNotIn("muted", registration(dict(device, muted={})))
+        for muted in ([], {"juno:1": 0}, {"agent:juno:1": -1}, {"agent:juno:1": "0"}, {"agent:juno:1": float("nan")},
+                      {f"agent:juno:{i}": 0 for i in range(MAX_MUTED + 1)}):
+            with self.assertRaises(ValueError):
+                registration(dict(device, muted=muted))
 
 
 class SealTests(unittest.TestCase):
@@ -157,7 +182,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                 result = (await (await client.get("/v1/clawy/status", headers=headers)).json())
                 self.assertEqual(result["liveActivities"], 2)
                 self.assertEqual((await client.post(endpoint, json={"v": 9}, headers=headers)).status, 400)
-                self.assertEqual((await client.post(endpoint, data=b"x" * 8193, headers=headers)).status, 413)
+                self.assertEqual((await client.post(endpoint, data=b"x" * (64 * 1024 + 1), headers=headers)).status, 413)
                 raw = json.dumps(device).encode()
                 async def chunks():
                     yield raw[:15]
@@ -194,7 +219,7 @@ class DashboardRegistrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result["liveActivities"], 2)
                     self.assertEqual(result["version"], plugin.VERSION)
                     self.assertEqual(result["devices"][0]["delivery"]["seq"], 42)
-                    self.assertEqual((await client.post("/devices", content=b"x" * 8193)).status_code, 413)
+                    self.assertEqual((await client.post("/devices", content=b"x" * (64 * 1024 + 1))).status_code, 413)
                     self.assertEqual((await client.post("/devices", json=[])).status_code, 400)
                     self.assertEqual((await client.post("/devices", json={"v": 99})).status_code, 400)
                     self.assertEqual((await client.delete("/devices/" + device["id"])).status_code, 200)

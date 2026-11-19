@@ -30,7 +30,7 @@ async def body(request):
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
-        if len(raw) > 8192:
+        if len(raw) > 64 * 1024:  # delivery.MAX_REGISTRATION: a device with every chat it muted
             raise HTTPException(413, "Registration too large")
     try:
         value = json.loads(raw)
@@ -46,7 +46,7 @@ async def status():
     service = await asyncio.to_thread(observer)
     devices = await asyncio.to_thread(service.devices.all)
     deliveries = await asyncio.to_thread(lambda: service.delivery.deliveries)
-    return {"version": service.version, "protocol": 2, "liveActivities": 2, "devices": [
+    return {"version": service.version, "protocol": 2, "liveActivities": 2, "mutes": 1, "devices": [
         {"id": d["id"], "name": d["name"], "text": d["text"],
          "delivery": deliveries.get(d["id"])} for d in devices]}
 

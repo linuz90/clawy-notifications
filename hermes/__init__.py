@@ -6,12 +6,13 @@ import logging
 import sys
 import threading
 
-from .delivery import Delivery, Devices
+from .delivery import MAX_REGISTRATION, Delivery, Devices
 from .activity import Activities
 from .cron import CronDelivery, adapter as cron_adapter
+from . import guide
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.4.2"
+VERSION = "0.4.6"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 
@@ -124,17 +125,17 @@ class Notifications:
         async def status(request):
             devices = await asyncio.to_thread(self.devices.all)
             deliveries = await asyncio.to_thread(lambda: self.delivery.deliveries)
-            return web.json_response({"version": VERSION, "protocol": PROTOCOL, "liveActivities": 2, "devices": [
+            return web.json_response({"version": VERSION, "protocol": PROTOCOL, "liveActivities": 2, "mutes": 1, "devices": [
                 {"id": d["id"], "name": d["name"], "text": d["text"],
                  "delivery": deliveries.get(d["id"])} for d in devices]})
 
         async def add(request):
-            if request.content_length is not None and request.content_length > 8192:
+            if request.content_length is not None and request.content_length > MAX_REGISTRATION:
                 return web.json_response({"error": "Registration too large"}, status=413)
             raw = bytearray()
             async for chunk in request.content.iter_chunked(8192):
                 raw.extend(chunk)
-                if len(raw) > 8192:
+                if len(raw) > MAX_REGISTRATION:
                     return web.json_response({"error": "Registration too large"}, status=413)
             try:
                 value = json.loads(raw)
@@ -193,6 +194,7 @@ def register(ctx):
     # on_session_start has no native turn ID in Hermes. pre_llm_call does, before the model runs.
     notifications.cron = CronDelivery(home, notifications.route)
     ctx.register_hook("pre_tool_call", notifications.cron.before_tool)
+    guide.register(ctx, VERSION)
     ctx.register_platform("clawy", "Clawy", adapter_factory=lambda config: cron_adapter(notifications.cron, config),
                           check_fn=lambda: True, cron_deliver_env_var="CLAWY_HOME_CHANNEL",
                           standalone_sender_fn=notifications.cron.send,
@@ -212,8 +214,8 @@ def register(ctx):
 
     def command(args):
         try:
-            raw = args.registration if args.registration is not None else sys.stdin.read(8193)
-            if len(raw.encode()) > 8192:
+            raw = args.registration if args.registration is not None else sys.stdin.read(MAX_REGISTRATION + 1)
+            if len(raw.encode()) > MAX_REGISTRATION:
                 raise ValueError("Too large")
             devices.change(device=json.loads(raw))
             notifications.activities.sync()

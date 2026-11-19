@@ -342,7 +342,7 @@ class HookTests(unittest.TestCase):
             hooks, unload = {}, []
             ctx = SimpleNamespace(profile_name="default", current_cron_execution=lambda: None,
                                   register_hook=lambda name, callback: hooks.__setitem__(name, callback),
-                                  register_platform_handler=lambda *_: None, register_platform=lambda *_, **kw: None, on_unload=unload.append,
+                                  register_platform_handler=lambda *_: None, register_platform=lambda *_, **kw: None, register_tool=lambda **_: None, on_unload=unload.append,
                                   register_cli_command=lambda *_: None)
             constants = SimpleNamespace(get_hermes_home=lambda: home, get_default_hermes_root=lambda **_: home)
             with patch.dict(sys.modules, {"hermes_constants": constants, "gateway.platforms.send_targets": SimpleNamespace(StandaloneSendPolicy=lambda **kwargs: kwargs)}), patch.object(Delivery, "_activity_post", return_value=True) as post, patch.object(Delivery, "send", return_value=200) as ordinary:

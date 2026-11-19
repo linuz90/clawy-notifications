@@ -33,13 +33,15 @@ type Run = { id: string; native: string; turns: Set<string>; startedAt: number; 
 /** `eligibleRun`: the run the app's `eligible` hint was sent with; it says nothing about the chat's
  * later runs. */
 type Target = { key: string; device: Device; follow: ActivityFollow; run?: Run; eligibleRun?: Run; announced: boolean; delivered: boolean; needsDelivered: boolean; timer?: ReturnType<typeof setTimeout>; cap?: ReturnType<typeof setTimeout>; queue: Promise<unknown> };
-type Clock = { now: () => number; later: typeof setTimeout; cancel: typeof clearTimeout; threshold: number; settle: number; window: number; cap: number; grace: number };
+type Clock = { now: () => number; later: typeof setTimeout; cancel: typeof clearTimeout; threshold: number; settle: number; quick: number; window: number; cap: number; grace: number };
 /** Long mode, by time alone: a run shows once it has worked `threshold` seconds and still works
  * `settle` seconds after the person left, so an ordinary turn that ends soon after gets only its
  * reply's notification. A run starting more than `window` seconds after they left (a turn begun on
- * another device, a later delivery) isn't one they left running. `grace`: how long a held row
- * waits, after its chat's last helper ends, for the announce turn. */
-const clock: Clock = { now: () => Date.now() / 1000, later: setTimeout, cancel: clearTimeout, threshold: 60, settle: 15, window: 120, cap: 8 * 3600, grace: 60 };
+ * another device, a later delivery) isn't one they left running. A run already known to be long
+ * (a helper, a plan) skips `threshold` and shows once it still works `quick` seconds after they
+ * left, so one that ends as they leave gets no card. `grace`: how long a held row waits, after
+ * its chat's last helper ends, for the announce turn. */
+const clock: Clock = { now: () => Date.now() / 1000, later: setTimeout, cancel: clearTimeout, threshold: 60, settle: 15, quick: 5, window: 120, cap: 8 * 3600, grace: 60 };
 
 export class Activities {
   private targets = new Map<string, Target>();
@@ -134,6 +136,7 @@ export class Activities {
     if (run.turns.size < 64) run.turns.add(id);
     run.held = false;
     this.time.cancel(run.grace);
+    for (const target of this.targets.values()) if (target.run === run) this.qualify(target);
     return true;
   }
   progress(session: string, id: string) {
@@ -249,6 +252,9 @@ export class Activities {
     const follow = target.follow, run = target.run;
     if (!run || run.ended || target.announced || this.closed) return;
     this.time.cancel(target.timer);
+    // Held with no helper left, the chat waits on their announce turn: nothing works until it
+    // starts (`resume`), and none may come.
+    if (run.held && !this.helpers.get(follow.sessionKey)?.ids.size) return;
     if (this.time.now() - run.startedAt >= this.time.cap) return;
     const manual = follow.mode === "manual" && !!follow.currentRun && run.turns.has(follow.currentRun.id);
     if (follow.mode === "manual" && !manual) return;
@@ -257,7 +263,8 @@ export class Activities {
     if (!manual && run.seenAt > awayAt + this.time.window) return;
     // A helper, a spawn or the app's hint for this run says it's long already; time decides the rest.
     const early = run.eligible || (follow.eligible && target.eligibleRun === run);
-    const remaining = early ? 0 : Math.max(this.time.threshold - (this.time.now() - run.startedAt), this.time.settle - (this.time.now() - awayAt));
+    const away = this.time.now() - awayAt;
+    const remaining = early ? this.time.quick - away : Math.max(this.time.threshold - (this.time.now() - run.startedAt), this.time.settle - away);
     if (!manual && remaining > 0) {
       target.timer = this.time.later(() => { if (this.targets.get(target.key) === target && target.run === run) this.qualify(target); }, remaining * 1000);
       target.timer.unref?.();

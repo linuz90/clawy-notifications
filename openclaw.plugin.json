@@ -34,7 +34,8 @@
       "clawy_mac_contacts",
       "clawy_mac_chats",
       "clawy_mac_chats_update",
-      "clawy_mac_places"
+      "clawy_mac_places",
+      "clawy_guide"
     ]
   }
 }

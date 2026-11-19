@@ -19,6 +19,30 @@ import { parseActivities,                     } from "./activity.js";
 
 
 
+
+
+
+
+
+
+
+
+
+/** At most this many muted chats per device. */
+export const maxMuted = 256;
+
+/** A device's muted chats, checked: undefined when it sent none, false when it isn't a mute list. */
+export function parseMuted(value     )                                             {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length > maxMuted) return false;
+  for (const [key, until] of entries) {
+    if (!key.startsWith("agent:") || key.length > 512 || typeof until !== "number" || !Number.isFinite(until) || until < 0) return false;
+  }
+  return entries.length ? Object.fromEntries(entries)                           : undefined;
+}
+
 const base64url = /^[A-Za-z0-9_-]+$/u;
 
 /** The one host this plugin ever posts to. A client that can register a device can't point it
@@ -36,6 +60,8 @@ export function parseDevice(input     )                {
   const { id, name, forwarder, token, p256dh, auth, text } = input;
   const activities = parseActivities(input.activities);
   if (activities === false) return null;
+  const muted = parseMuted(input.muted);
+  if (muted === false) return null;
   if (typeof id !== "string" || !base64url.test(id) || typeof token !== "string" || !token) return null;
   if (typeof p256dh !== "string" || !base64url.test(p256dh) || Buffer.from(p256dh, "base64url").length !== 65) return null;
   if (typeof auth !== "string" || !base64url.test(auth) || Buffer.from(auth, "base64url").length !== 16) return null;
@@ -46,8 +72,11 @@ export function parseDevice(input     )                {
     return null;
   }
   if (url.origin !== forwarderOrigin() || url.pathname !== `/v1/forward/${id}` || url.search || url.hash) return null;
-  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false, ...(activities?.length ? { activities } : {}) };
+  const gatewayDevice = shortText(input.gatewayDevice), person = shortText(input.person);
+  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false, ...(activities?.length ? { activities } : {}), ...(muted ? { muted } : {}), ...(gatewayDevice ? { gatewayDevice } : {}), ...(person ? { person } : {}) };
 }
+
+const shortText = (value         ) => typeof value === "string" && value && value.length <= 256 ? value : undefined;
 
 export class DeviceFile {
                    path        ;

@@ -17,7 +17,31 @@ export type Device = {
   text?: boolean;
   /** The chats this device follows on its Lock Screen (PROTOCOL.md, Live Activities). */
   activities?: ActivityFollow[];
+  /** The chats this device muted: session key to when the mute ends, epoch ms, 0 for until unmuted
+   * (PROTOCOL.md, Muted chats). */
+  muted?: Record<string, number>;
+  /** The gateway's id for the app that registered this device, as its presence entries carry it,
+   * and the person it was signed in as: taken from that connection, never from what it sent, so a
+   * reply can tell this device's own use from its person's other devices (PROTOCOL.md, In use
+   * elsewhere). */
+  gatewayDevice?: string;
+  person?: string;
 };
+
+/** At most this many muted chats per device. */
+export const maxMuted = 256;
+
+/** A device's muted chats, checked: undefined when it sent none, false when it isn't a mute list. */
+export function parseMuted(value: any): Record<string, number> | undefined | false {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length > maxMuted) return false;
+  for (const [key, until] of entries) {
+    if (!key.startsWith("agent:") || key.length > 512 || typeof until !== "number" || !Number.isFinite(until) || until < 0) return false;
+  }
+  return entries.length ? Object.fromEntries(entries) as Record<string, number> : undefined;
+}
 
 const base64url = /^[A-Za-z0-9_-]+$/u;
 
@@ -36,6 +60,8 @@ export function parseDevice(input: any): Device | null {
   const { id, name, forwarder, token, p256dh, auth, text } = input;
   const activities = parseActivities(input.activities);
   if (activities === false) return null;
+  const muted = parseMuted(input.muted);
+  if (muted === false) return null;
   if (typeof id !== "string" || !base64url.test(id) || typeof token !== "string" || !token) return null;
   if (typeof p256dh !== "string" || !base64url.test(p256dh) || Buffer.from(p256dh, "base64url").length !== 65) return null;
   if (typeof auth !== "string" || !base64url.test(auth) || Buffer.from(auth, "base64url").length !== 16) return null;
@@ -46,8 +72,11 @@ export function parseDevice(input: any): Device | null {
     return null;
   }
   if (url.origin !== forwarderOrigin() || url.pathname !== `/v1/forward/${id}` || url.search || url.hash) return null;
-  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false, ...(activities?.length ? { activities } : {}) };
+  const gatewayDevice = shortText(input.gatewayDevice), person = shortText(input.person);
+  return { v: 2, id, name: typeof name === "string" ? name.slice(0, 80) : undefined, forwarder, token, p256dh, auth, text: text !== false, ...(activities?.length ? { activities } : {}), ...(muted ? { muted } : {}), ...(gatewayDevice ? { gatewayDevice } : {}), ...(person ? { person } : {}) };
 }
+
+const shortText = (value: unknown) => typeof value === "string" && value && value.length <= 256 ? value : undefined;
 
 export class DeviceFile {
   private readonly path: string;
