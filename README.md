@@ -51,7 +51,7 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.4.7 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.4.8 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 
@@ -93,7 +93,7 @@ node test/contract/openclaw.mjs [version]  # needs a committed checkout
 node test/contract/hermes.mjs [tag]        # also needs uv
 ```
 
-Tested on OpenClaw `2026.10.7` and `2026.11.1`, and Hermes `v0.22.7` and `v0.23.0`.
+Tested on OpenClaw `2026.10.7` and `2026.11.1`, and Hermes `v0.22.7` and `v0.23.3`.
 
 ## License
 

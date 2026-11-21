@@ -12,7 +12,7 @@ import { Activities } from "./activity.ts";
 import { registerDeviceTools } from "./device-tools.ts";
 import { registerGuideTool } from "./guide.ts";
 
-const VERSION = "0.4.7";
+const VERSION = "0.4.8";
 /** How long a reply quieted for a device waits before it's looked at again: the two minutes another
  * device counts as in use after its last stamp, plus a beat. */
 const RECHECK_MS = 150_000;
