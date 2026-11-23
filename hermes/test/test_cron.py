@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 import tempfile
 import unittest
@@ -55,12 +56,79 @@ class Store:
         self.store.lineage.publish_compression_child(parent, CompressionChild(session_id=child, source='clawy'),
                                                      [NewMessage(role='user', content=handoff)], compression_lock_holder=holder)
 
+    def hide(self, session):
+        if self.store is None:
+            return self.db.set_session_hidden(session, True)
+        self.store.sessions.set_hidden(session, True)
+
+    def delegate(self, session, parent, source):
+        """A delegate child as Hermes makes one: its parent's source, marked in model_config."""
+        config = {'_delegate_from': parent}
+        if self.store is None:
+            return self.db.create_session(session, source, parent_session_id=parent, model_config=config)
+        self.store.sessions.create_exclusive(session, source=source, model_config=config)
+
     def close(self):
         if self.store is None:
             from hermes_state_registry import release_or_close
             release_or_close(self.db)
         else:
             self.store.close()
+
+
+async def check_terminal_reset(home, db, store, delivery, alerts):
+    from gateway import run
+    from gateway.config import GatewayConfig
+    from gateway.session import SessionStore
+    from gateway.session_authority import initialize_session_authority
+    from gateway.session_local import create_local_session
+    try:
+        from gateway.session_contract import SessionActor
+    except ImportError:
+        from gateway.session_contract import Principal as SessionActor
+
+    sessions = SessionStore(home / 'sessions', GatewayConfig())
+    if store.store is None:
+        sessions._db = db
+        handle = db
+    else:
+        handle = sessions.persistence
+    runner = SimpleNamespace(session_store=sessions, _session_db=handle, adapters={}, _draining=False)
+    with patch.object(run, '_load_gateway_config', return_value={'platform_toolsets': {'cli': []}}):
+        authority = await initialize_session_authority(runner, profile_id='default', instance_id='cron-reset')
+        actor = SessionActor('uid:1000', 'default', frozenset({'session:create'}), 'native')
+        ref = create_local_session(authority, actor, dict(request_id='terminal-reset', source='cli',
+                                   cwd=str(home), model='fixture', toolsets=[]))
+
+    original = ref.session_id
+    route = authority.sessions[original].route
+    db.append_message(original, 'user', 'Before reset')
+    # Resolve queued results at write time, even if the chat reset after admission.
+    assert (await delivery.send(None, original, 'Queued before reset'))['success']
+    previous = sessions.reset_session(route).session_id
+    db.append_message(previous, 'user', 'Between resets')
+    current = sessions.reset_session(route).session_id
+    db.append_message(current, 'user', 'After reset')
+    for segment in (original, previous, current):
+        assert (await delivery.send(None, segment, f'Result for {segment}'))['success']
+    delivery.flush()
+
+    expected = ['After reset', 'Queued before reset', *(f'Result for {sid}' for sid in (original, previous, current))]
+    actual = [row['content'] for row in db.get_messages(current)]
+    assert actual == expected, ('results must follow the reset', actual)
+    assert [row['content'] for row in db.get_messages(original)] == ['Before reset']
+    assert [row['content'] for row in db.get_messages(previous)] == ['Between resets']
+    assert [alert['sessionKey'] for alert in alerts[-4:]] == [f'agent:default:{current}'] * 4
+    # A binding the plugin can't read falls back to compression lineage rather than failing the send.
+    cron = sys.modules[type(delivery).__module__]
+    broken = RuntimeError('storage_unavailable')
+    with patch.object(cron._Sessions, 'local_target', side_effect=broken), \
+            patch.object(cron._LegacySessions, 'local_target', side_effect=broken):
+        assert (await delivery.send(None, current, 'Through lineage'))['success']
+        delivery.flush()
+    assert db.get_messages(current)[-1]['content'] == 'Through lineage'
+    if store.store is not None:
+        sessions.close_all_db_handles()
 
 
 def probe():
@@ -99,6 +167,12 @@ def probe():
         db.create_session(sid, source='clawy')
         db.append_message(sid, 'user', content='Schedule this')
         db.create_session('telegram-session', source='telegram')
+        db.create_session('terminal-session', source='cli')
+        db.create_session('cron-session', source='cron')
+        db.create_session('room-session', source='bot_room')
+        store.hide('room-session')
+        # Hermes's own delegate child keeps its parent's source and says what it is in model_config.
+        store.delegate('delegate-session', 'terminal-session', 'cli')
         # (deliver, routed from a Clawy chat, routed from any other surface). Hermes's own
         # `local:<chat>` lane refuses a dashboard chat at every fire (no gateway receipt).
         cases = [(None, 'clawy:' + sid, None), ('origin', 'clawy:' + sid, 'origin'), ('local', 'local', 'local'),
@@ -109,17 +183,42 @@ def probe():
                  (f'local:{sid},origin', 'clawy:' + sid, f'clawy:{sid},origin'),
                  ('local:telegram-session', 'local:telegram-session', 'local:telegram-session'),
                  ('local:missing-session', 'local:missing-session', 'local:missing-session')]
-        for source in ('telegram', 'dashboard', 'cli', 'clawy'):
-            set_session_vars(source=source, session_id=sid, session_key=sid, cron_session='')
+        # Each surface's turn as Hermes binds it: a messaging app and the terminal name their own
+        # lane; a dashboard turn names none, so one in the Clawy chat that lost its source (a resume
+        # without it) is the Clawy chat's too.
+        turns = dict(clawy=dict(source='clawy', session_key=sid), resumed=dict(source='tui', session_key=sid, ui_session_id='tab'),
+                     # An editor's ACP turn names no lane either, but no dashboard tab: Hermes's own fallback.
+                     acp=dict(source='', session_key=sid),
+                     telegram=dict(platform='telegram', chat_id='123', source='telegram', session_key='agent:main:telegram:dm:123'),
+                     terminal=dict(platform='local', chat_id='terminal-session', source='cli',
+                                   session_key='agent:main:local:dm:terminal-session'))
+        for surface, turn in turns.items():
+            set_session_vars(session_id=sid, cron_session='', **turn)
             for delivery, from_clawy, from_other in cases:
                 args = dict(action='create', prompt='Safe result', schedule='every 1h')
                 if delivery is not None:
                     args['deliver'] = delivery
                 block, changed = _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)
                 changed = changed or args
-                expected = from_clawy if source == 'clawy' else from_other
-                assert changed.get('deliver') == expected, (source, delivery, changed)
+                expected = from_clawy if surface in ('clawy', 'resumed') else from_other
+                if surface == 'acp' and delivery == 'local:' + sid:
+                    expected = from_clawy  # an explicit Clawy chat reroutes from any turn
+                assert changed.get('deliver') == expected, (surface, delivery, changed)
                 assert changed['prompt'] == args['prompt'] and block is None
+        # Asked from Clawy in a chat begun elsewhere, a dashboard turn with no lane of its own: the
+        # result goes into that chat, never into one of Hermes's own sessions or one that's gone.
+        for chat, expected in (('terminal-session', 'clawy:terminal-session'), ('telegram-session', 'clawy:telegram-session'),
+                               ('cron-session', None), ('room-session', None), ('delegate-session', None),
+                               ('missing-session', None)):
+            set_session_vars(source='tui', session_id=chat, session_key=chat, ui_session_id='tab', cron_session='')
+            args = dict(action='create', prompt='Safe result', schedule='every 1h', failure_deliver='origin')
+            changed = _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=chat)[1] or args
+            assert changed.get('deliver') == expected, (chat, changed)
+            assert changed['failure_deliver'] == (expected or 'origin'), (chat, changed)
+        # A scheduled run's own turn never routes.
+        set_session_vars(source='tui', session_id='terminal-session', session_key='terminal-session', cron_session='1')
+        args = dict(action='create', prompt='Safe result', schedule='every 1h')
+        assert (_dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id='terminal-session')[1] or args) == args
         # A Clawy chat's turn the gateway owner runs binds it as a local chat with no source.
         for chat, expected in ((sid, 'clawy:' + sid), ('telegram-session', None), ('missing-session', None)):
             set_session_vars(platform='local', chat_id=chat, session_id=chat, session_key='agent:main:local:' + chat,
@@ -273,10 +372,17 @@ def probe():
             assert observer.cron.repair_jobs()
         sender.close()
         release_or_close(other)
-        # Invalid and foreign targets must never get a note or push.
-        for target in ('missing-session', 'telegram-session'):
+        # A chat begun in the terminal gets the same automation post and push as a Clawy chat.
+        assert asyncio.run(observer.cron.send(None, 'terminal-session', 'Check the basil'))['success']
+        observer.cron.flush()
+        posted = db.get_messages('terminal-session')[-1]
+        assert posted['content'] == 'Check the basil' and posted['display_metadata']['clawy_automation'] is True
+        assert alerts[-1]['sessionKey'] == 'agent:default:terminal-session' and alerts[-1]['kind'] == 'reply'
+        asyncio.run(check_terminal_reset(home, db, store, observer.cron, alerts))
+        # Hermes's own sessions and missing ones must never get a note or push.
+        for target in ('missing-session', 'cron-session', 'room-session', 'delegate-session'):
             assert asyncio.run(observer.cron.send(None, target, 'Wrong chat')).get('error')
-        assert len(db.get_messages('telegram-session')) == 0
+        assert len(db.get_messages('cron-session')) == 0 and len(db.get_messages('room-session')) == 0
         # Both scheduler lanes must preserve images; the live lane sends text and media separately.
         from gateway.config import load_gateway_config, Platform
         image = (home / 'chart.png').resolve()
@@ -381,7 +487,7 @@ def probe():
         observer.close()
         store.close()
         release_or_close(db)
-        print('PASS: routing, job repair, queued sender, busy chat, restart, repeated output, push, foreign targets')
+        print('PASS: routing, chats begun elsewhere, job repair, queued sender, busy chat, restart, repeated output, push, foreign targets')
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ import { Activities } from "./activity.js";
 import { registerDeviceTools } from "./device-tools.js";
 import { registerGuideTool } from "./guide.js";
 
-const VERSION = "0.4.8";
+const VERSION = "0.4.9";
 /** How long a reply quieted for a device waits before it's looked at again: the two minutes another
  * device counts as in use after its last stamp, plus a beat. */
 const RECHECK_MS = 150_000;

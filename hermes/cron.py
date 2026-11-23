@@ -1,7 +1,8 @@
-"""Cron delivery into legacy dashboard chats (Hermes issue #83904, Clawy #206)."""
+"""Cron delivery into the profile's chats as Clawy shows them (Hermes issue #83904, Clawy #206, #657)."""
 
 import asyncio
 from contextlib import contextmanager
+import json
 import logging
 from pathlib import Path
 import sqlite3
@@ -85,8 +86,22 @@ class _Sessions:
         row = self.store.sessions.list_row(session)
         return row.source if row is not None else None
 
+    def listed(self, session):
+        row = self.store.sessions.list_row(session)
+        if row is None:
+            return False
+        # The list row leaves out `model_config`, which marks a delegate child.
+        delegated = self.store.sessions.get_model_config_value(session, '_delegate_from')
+        return _is_listed(row.source, row.hidden, {'_delegate_from': delegated})
+
     def tip(self, session):
         return self.store.lineage.tip(session)
+
+    def local_target(self, session):
+        bindings = self.store.bindings
+        owner = bindings.lineage_owner(session)
+        if bindings.binding_marks(owner).policy:
+            return bindings.validate_lineage(bindings.receipt(owner))
 
     def note(self, session, receipt, content):
         self.store.messages.append_completion_note(session, receipt, content, 'internal_notification', {'clawy_automation': True})
@@ -104,15 +119,50 @@ class _LegacySessions:
         row = self.db.get_session_list_row(session)
         return row.get('source') if row is not None else None
 
+    def listed(self, session):
+        row = self.db.get_session_list_row(session)
+        if row is None:
+            return False
+        # The list row leaves out `model_config`, which marks a delegate child.
+        return _is_listed(row.get('source'), row.get('hidden'), (self.db.get_session(session) or {}).get('model_config'))
+
     def tip(self, session):
         return self.db.get_compression_tip(session) or session
+
+    def local_target(self, session):
+        try:
+            from hermes_state_local import local_lineage_owner
+            from hermes_state_local_lineage import local_physical_target
+        except ImportError:
+            return None  # Classic builds predate the canonical local binding.
+        with self.db._read_ctx() as conn:
+            target = local_physical_target(conn, local_lineage_owner(conn, session))
+        return target if target != session else None
 
     def note(self, session, receipt, content):
         self.db.append_completion_note(session, receipt, content, 'internal_notification', {'clawy_automation': True})
 
 
+# Sessions Hermes runs for its own work, which Clawy doesn't list as chats.
+_INTERNAL_SOURCES = frozenset({'cron', 'subagent', 'sub_agent', 'delegate', 'kanban'})
+
+
+def _is_listed(source, hidden, model_config=None):
+    """A session with this stored source, visibility and creation config is a chat Clawy lists, begun
+    on any surface: an automation asked for from Clawy in a terminal or Telegram chat posts there too
+    (Clawy #657). Hidden ones (a bot's room) and Hermes's own work stay out, as they do of Clawy's
+    list, a delegate child too, which keeps its parent's source and says so in `model_config`."""
+    if isinstance(model_config, str):
+        try:
+            model_config = json.loads(model_config)
+        except ValueError:
+            model_config = None
+    delegated = isinstance(model_config, dict) and bool(model_config.get('_delegate_from'))
+    return not hidden and not delegated and source not in _INTERNAL_SOURCES
+
+
 class NotClawyChat(Exception):
-    """The target is no Clawy chat of this profile; store errors never mean this."""
+    """The target is no chat of this profile; store errors never mean this."""
 
 
 class CronDelivery:
@@ -183,14 +233,29 @@ class CronDelivery:
         # A Clawy chat's turn the gateway runs itself (a prompt forwarded to the owner while it
         # holds work for the chat) names it as a Hermes local chat and sets no source, so Hermes
         # would store `origin` as `local:<chat>`, the lane above that never delivers.
-        chat = get_session_env('HERMES_SESSION_CHAT_ID')
-        if get_session_env('HERMES_SESSION_PLATFORM') == 'local' and chat and self._is_clawy(chat):
+        platform, chat = get_session_env('HERMES_SESSION_PLATFORM'), get_session_env('HERMES_SESSION_CHAT_ID')
+        if platform == 'local' and chat and self._is_clawy(chat):
             return chat
+        # A dashboard prompt names no delivery lane: no platform, no chat id, the chat's stored id as
+        # its session key, and the dashboard tab that sent it (an editor's ACP turn names none). That's
+        # a message sent from Clawy in a chat begun on another surface (the terminal, a messaging app),
+        # or in a Clawy chat Hermes resumed without its source; Hermes's own TUI and Desktop prompts
+        # look the same. Hermes would save `origin` with no origin, which goes to the profile's home
+        # channel or nowhere, though its cronjob tool tells the model a local chat's default writes the
+        # result into that chat, so the result goes there (Clawy #657).
+        session = get_session_env('HERMES_SESSION_KEY')
+        if (not platform and not chat and session and get_session_env('HERMES_UI_SESSION_ID')
+                and self._is_chat(session)):
+            return session
         return None
 
     def _is_clawy(self, session):
         with _sessions(self.home) as state:
             return state.source(session) == 'clawy'
+
+    def _is_chat(self, session):
+        with _sessions(self.home) as state:
+            return state.listed(session)
 
     def repair_jobs(self):
         """Point this profile's jobs saved before the hook routed them (0.4.8) at `clawy:<chat>`:
@@ -264,9 +329,21 @@ class CronDelivery:
 
     @staticmethod
     def _target(state, session):
-        if state.source(session) != 'clawy':
-            raise NotClawyChat('Target must be a Clawy chat in this profile')
-        return state.tip(session)
+        if not state.listed(session):
+            raise NotClawyChat('Target must be a chat in this profile')
+        # A local reset moves the transcript without extending its compression chain.
+        # Read the same stored binding as Hermes's local lane (README, What could break).
+        try:
+            target = state.local_target(session)
+        except Exception:
+            # A binding Hermes can't validate here (a receipt behind a compression its classic build
+            # made, say) falls back to compression lineage, which delivered before this lookup existed.
+            target = None
+        if target is None:
+            return state.tip(session)
+        if target != session and not state.listed(target):
+            raise NotClawyChat('Target must be a chat in this profile')
+        return target
 
     async def send(self, pconfig, chat_id, message, *, thread_id=None, media_files=None, **_):
         # Hermes's durable scheduler queue invokes the sender without an execution identity.
