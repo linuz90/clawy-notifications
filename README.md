@@ -51,7 +51,7 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.4.9 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.4.10 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 

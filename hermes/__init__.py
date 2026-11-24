@@ -12,8 +12,19 @@ from .cron import CronDelivery, adapter as cron_adapter
 from . import guide
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.4.9"
+VERSION = "0.4.10"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
+
+# Hermes puts a platform's hint in the system prompt of each chat on it, and of each scheduled job
+# delivering to it. Without one, a Clawy chat was told nothing about files, and its agent offered to
+# send a ZIP through Telegram. Clawy shows each MEDIA: line in a reply as the file, as Hermes Desktop does.
+PLATFORM_HINT = (
+    "You are chatting with the person in Clawy, a native iPhone, iPad and Mac app. Markdown renders: tables, "
+    "task lists, code, Mermaid diagrams, and math in \\(...\\) or $$...$$. Deliver files by writing "
+    "MEDIA:/absolute/path/to/file on a line of its own, any file type: pictures and videos show in the chat, "
+    "everything else becomes a file the person can open, save and share. A file sent this way reaches them "
+    "here, so no other channel is needed."
+)
 
 
 def reply_kind(session, platform=""):
@@ -199,7 +210,7 @@ def register(ctx):
                           check_fn=lambda: True, cron_deliver_env_var="CLAWY_HOME_CHANNEL",
                           standalone_sender_fn=notifications.cron.send,
                           standalone_send=StandaloneSendPolicy(media=True),
-                          parse_target_ref_fn=lambda target: (target, None))
+                          parse_target_ref_fn=lambda target: (target, None), platform_hint=PLATFORM_HINT)
     ctx.register_hook("pre_llm_call", notifications.started)
     ctx.register_hook("post_llm_call", notifications.capture)
     ctx.register_hook("on_session_end", notifications.ended)

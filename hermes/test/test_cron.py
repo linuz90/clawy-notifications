@@ -155,6 +155,9 @@ def probe():
         ctx = PluginContext(PluginManifest(name='clawy-contract', key='clawy-contract', source='user'), manager)
         plugin.register(ctx)
         assert _is_known_delivery_platform('clawy'), 'cron preflight must recognize the platform'
+        from agent.system_prompt import platform_hint
+        assert platform_hint(SimpleNamespace(platform='clawy')) == plugin.PLATFORM_HINT, \
+            "a Clawy chat's system prompt must say how to send a file"
         observer = plugin._notifications
         alerts = []
         observer.delivery.submit = alerts.append
