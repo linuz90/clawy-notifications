@@ -113,6 +113,17 @@ A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes 
 
 The device says when any of this looks wrong, and it never moves to another route by itself: someone who chose a plugin chose not to trust the relay.
 
+
+## Connector approvals (OpenClaw)
+
+Plugin 0.5.0 advertises `connectorApprovals: 1` in `clawy.notifications.status` when it registered the hook. Clawy reads and writes `plugins.entries.clawy-notifications.config.connectorAsks` through `config.get` and `config.patch`. The object is keyed first by agent ID, then by MCP server ID. A nonempty string is the revision of that pair's Ask Every Time setting. The client writes a new revision when it sets Ask Every Time.
+
+`clawy.connectors.namespaces` (`operator.read`) returns `{ namespaces: { [serverId]: prefix } }`. A missing server ID means the plugin couldn't confirm a stable tool prefix across agent workspaces and possible name collisions. The client offers agent levels only when it has a confirmed prefix for that connector.
+
+The hook uses OpenClaw's `plugin.approval.requested` event and approval list. The plugin ID is `clawy-notifications`, `toolName` names the MCP tool, and the request has the calling agent and session. The title names the connector. The description's first line is the tool title, followed by at most four short argument lines. The standard sealed approval route carries the same title and description.
+
+Resolve via `plugin.approval.resolve`. An `allow-always` decision also asks the hook to remove the matching rule from the gateway's config. The callback leaves a newer revision intact. Allow Once and Deny keep the rule.
+
 ## Routing
 
 A plugin applies these, where `rest` is the session key after `agent:<agent>:`:

@@ -4,7 +4,19 @@
   "description": "Decides on your gateway what should alert, seals it to your device's key, and hands the ciphertext to Clawy's forwarder.",
   "categories": ["other"],
   "activation": { "onStartup": true },
-  "configSchema": { "type": "object", "additionalProperties": false },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "connectorAsks": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
   "contracts": {
     "tools": [
       "clawy_iphone_health",

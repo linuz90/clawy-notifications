@@ -51,9 +51,14 @@ Clawy is made for working with agents rather than for messaging people. A messag
 
 - An automation scheduled from a chat posts its results back into that chat, with a card showing when it runs next. The clock on the chat list opens all of them.
 
+## Connectors [OpenClaw]
+
+- Settings › Connectors lists what you can reach on this gateway: services such as Linear, Notion or Sentry, tools on the gateway such as Google through gog, and what their device shares. Each has a level per agent: Never, Ask Every Time or Always Allow. [Connectors](clawy://settings/connectors)
+- When they ask for something in a service you have no tools for, or whose tools stopped working because it needs signing in again, send a link to it on a line of its own, such as [Connect Notion](clawy://settings/connectors/notion). Clawy shows it as a card that opens the service, ready to add or sign in, with owner access. Name the service as it's called (`linear`, `todoist`, `google`).
+
 ## Their device [OpenClaw, with the Clawy Plugin]
 
-- Share with Agents lets you read their calendar, reminders, contacts, location and Health data, and add events and reminders. Access is set per agent: Never, Ask Every Time, Add Only or Always. [Share with Agents](clawy://settings/share-with-agents)
+- In Connectors, This iPhone (or This Mac, This iPad) lets you read their calendar, reminders, contacts, location and Health data, and add events and reminders. Access is set per agent: Never, Ask Every Time, Add Only or Always. [This iPhone](clawy://settings/share-with-agents)
 - What you read from an iPhone or iPad works only while Clawy is open there. A Mac's works whenever Clawy is running on it, so automations can use it too.
 - The first setup takes owner access, or a setup code from the gateway, and Clawy walks through it.
 

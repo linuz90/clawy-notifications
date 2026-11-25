@@ -10,9 +10,12 @@ import { approvalMessage, automationPostMessage, failedJobMessage, forDevice, ho
 import { fit, seal } from "./seal.ts";
 import { Activities } from "./activity.ts";
 import { registerDeviceTools } from "./device-tools.ts";
+import { registerConnectorApprovals } from "./connector-approvals.ts";
+import { registerCredentials } from "./credentials.ts";
 import { registerGuideTool } from "./guide.ts";
+import { registerToolStatus } from "./tool-status.ts";
 
-const VERSION = "0.4.10";
+const VERSION = "0.5.0";
 /** How long a reply quieted for a device waits before it's looked at again: the two minutes another
  * device counts as in use after its last stamp, plus a beat. */
 const RECHECK_MS = 150_000;
@@ -65,7 +68,10 @@ export default definePluginEntry({
   name: "Clawy notifications",
   description: "Sealed push notifications for Clawy.",
   register(api) {
+    const connectorApprovals = registerConnectorApprovals(api);
     registerDeviceTools(api);
+    registerToolStatus(api);
+    registerCredentials(api);
     registerGuideTool(api, VERSION);
     const log = api.logger;
     const state = join(api.runtime.state.resolveStateDir(process.env), "clawy-notifications");
@@ -275,6 +281,7 @@ export default definePluginEntry({
         liveActivities: 2,
         // Devices may send the chats they muted (PROTOCOL.md, Muted chats).
         mutes: 1,
+        ...(connectorApprovals ? { connectorApprovals: 1 } : {}),
         listening,
         devices: devices.list().map(({ id, name, text }) => ({ id, name, text, delivery: deliveries.get(id) })),
       });

@@ -13,6 +13,8 @@ No runtime dependencies beyond OpenClaw and Node.
 | `devices.ts` | The devices registered here, in one `0600` file |
 | `index.ts` | Wires those to the gateway's events, and sends |
 | `activity.ts` | Generic lifecycle state, target qualification, timers and bounded forwarding |
+| `connector-approvals.ts` | Asks before an agent uses a connector set to Ask Every Time |
+| `credentials.ts` | Config SecretRef locations, the 1Password plugin's rules, and 1Password vault and item metadata |
 
 `dist/` is `build.mjs`'s output: these same files with the types stripped, line for line.
 
@@ -22,6 +24,7 @@ No runtime dependencies beyond OpenClaw and Node.
 - Approval requests and resolutions, including the command, over the SDK's approvals client (`operator.approvals`).
 - Questions and resolutions, over an operator client signed in with this gateway's own token or password (`operator.questions`), resolved the way the gateway resolves them, secret references included.
 - Failed scheduled tasks, from the `cron_changed` hook.
+- MCP call names and the calling agent in `before_tool_call`. When a rule asks, the approval shows a short preview of scalar arguments. The preview omits nested objects, fields named like a credential or a code, a link's sign-in and query, and any run that reads as a token.
 - An automation's post, from `api.runtime.events.onSessionTranscriptUpdate`: every message committed to a transcript passes through it, and it acts only on one carrying `openclawAutomation`, a scheduled task's result committed into a chat, which no run of that chat announces.
 - A message posted with `chat.inject` (a script telling you a job is done, say), from the same listener: an assistant message from `provider: openclaw`, `model: gateway-injected`, with no `idempotencyKey` or `openclawAbort`. Those two mark the gateway's other injected rows (a slash command's reply, a run's mirrored reply, a stopped reply's partial), whose run or send already covers them. No run announces an injected message, and OpenClaw's own Web Push skips it, so without the plugin nothing alerts.
 
@@ -42,7 +45,12 @@ It needs no `allowConversationAccess`, and it reads no transcript history. That 
 - An automation's post: `onSessionTranscriptUpdate` publishing the committed message with its chat's key and a `messageId`, and `openclawAutomation` marking it. The contract test checks both names are still there; the shape was read from OpenClaw `2026.10.7`'s `commitBackgroundResultToSession` and `publishTranscriptTurnUpdate`.
 - A `chat.inject` message: the row `appendInjectedAssistantMessageToTranscript` writes (`model: gateway-injected`, no `idempotencyKey`), as `2026.10.7` and `2026.11.3` write it. If a release starts giving it a send key, injected messages stop alerting.
 - `createOperatorApprovalsGatewayClient`, and a backend `GatewayClient` connecting without pairing on loopback.
+- `registerGatewayMethod` and the `cron_changed` hook. The owner-only `clawy.tools.status` method checks gog with fixed arguments and a short timeout. It reads account names from an explicitly configured file keyring only, with the services each was signed in for and whether its scopes only read, where gog can open the sign-in (`GOG_KEYRING_PASSWORD` in the gateway's environment); never a scope list, token or error. Keychain and auto selection may prompt on the gateway computer, so those configurations leave account status unknown.
+- Embedded MCP and Claude's loopback bridge pass `<safe-server>__<tool>` to `before_tool_call`. Direct Claude MCP uses the `mcp__` wrapper. OpenClaw 2026.11.3 keeps ASCII letters, digits, underscores and hyphens in the server prefix, replaces other characters with hyphens, prefixes non-letter starts with `mcp-`, and clips the result to 30 characters. Colliding prefixes get numeric suffixes in declaration order. The SDK's `loadAgentHarnessMcpConfig` enumerates declarations from config and enabled plugins in each workspace. It returns sorted names, so Clawy offers levels only for prefixes that stay distinct under all possible orders. The hook blocks an ambiguous call when it could match an existing ask rule.
+- Hook approvals rely on `requireApproval.onResolution`, the approval owner's ID on the event, and `runtime.config.current` and `mutateConfigFile` for access changes.
 - `registerGatewayMethod` and the `cron_changed` hook.
+- The bundled 1Password plugin keeps its service account token in `credentials/onepassword/service-account-token` under the gateway's state directory, and checks `op` with `plugin-sdk/secret-ref-runtime`'s `resolveTrustedExecutablePath`. The metadata list uses the JSON fields from `op vault list` and `op item list`, including `additional_information`, `urls[].href` and `updated_at`.
+- `config.get` redacts sensitive SecretRef IDs and the whole `plugins.entries.onepassword` entry (its name matches the redactor's `/password/` rule). Credentials reads the gateway's source config snapshot in-process (`plugin-sdk/runtime-config-snapshot`), where the references are still intact before resolution, and the 1Password plugin's `items` registry shape (`{item, vault?, field?, policy?, description?}` per slug), which Clawy also writes.
 
 ## Device tools
 
@@ -51,3 +59,10 @@ The plugin also owns Clawy's fixed `clawy_iphone_*`, `clawy_ipad_*` and `clawy_m
 These tools need the updated app on every sharing device. Older apps still publish dynamic node tools, which OpenClaw renames alongside the fixed copies and can still reset a native Claude conversation. The first plugin/app upgrade changes the catalog once; a host that refuses transcript replay may lose native context on that transition. This plugin does not change host authentication or replay configuration. `clawy.devices.status` (`operator.read`) advertises protocol 2: the fixed catalog routes both native Mac clients and older iOS-tagged Mac clients. Mac sharing requires protocol 2; iPhone and iPad also accept protocol 1.
 
 The catalog contains 28 tools (10 each for iPhone and iPad, eight for Mac), even for device families and sources not in use. This fixed set avoids resets when another device is paired; source grants still decide what each call may read or change. Device tools use plugin policy id `clawy-notifications`, not the dynamic-node `clawy` id or `gateway.nodes.pluginTools.enabled`.
+
+## Connector approvals
+
+For an agent set to Ask Every Time, the plugin sends an OpenClaw plugin approval before that agent calls the connector. The hook checks `plugins.entries.clawy-notifications.config.connectorAsks` in the current runtime config on each call. The plugin declares that path needs no reload. Allow runs the call once, Deny stops it, and Always Allow removes that agent's matching ask rule so future calls can proceed. Codex uses its own MCP approvals. See [the wire contract](../PROTOCOL.md#connector-approvals-openclaw).
+## Credentials
+
+`clawy.credentials.status` (`operator.admin`) answers what `config.get` hides from a client and no gateway method lists, for Clawy's Credentials page: which settings use a SecretRef, with IDs for store and environment references (names, not values); the bundled 1Password plugin's rules (each slug's item, vault, field, policy and description, and whether the gateway's own plugin settings block it), since `config.get` redacts that plugin's whole entry, so Clawy can change a rule with `config.patch`; and, with that plugin's token file, the vaults and item metadata the service account can read (title, category, sites, a login's username, a card's last four digits). It also says where that token file goes, and with no token yet whether `op` is missing or fails the trust check, for Clawy's steps to connect 1Password. The token goes only to an `op` that passes OpenClaw's own trust check, as the bundled plugin's does (`pluginSecretRefSetup.resolveTrustedExecutablePath`). It never runs `op item get` or `op read` and never returns secret values. The 1Password listing is cached for 60 seconds; pass `refresh: true` to refresh it immediately.

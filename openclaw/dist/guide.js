@@ -10,7 +10,7 @@ const candidates = [new URL("../guide.md", import.meta.url), new URL("../../guid
 
 export const guideToolName = "clawy_guide";
 
-export const guideDescription = "What the person can do with you in Clawy, the iPhone, iPad and Mac app they are chatting with you in, and how to set each thing up. Call it when they ask what you can do here or how Clawy works, before answering.";
+export const guideDescription = "What the person can do with you in Clawy, the iPhone, iPad and Mac app they are chatting with you in, and how to set each thing up. Call it when they ask what you can do here or how Clawy works, and when they want you to use a service you have no tools for yet, before answering.";
 
 export function readGuide()         {
   const file = candidates.find(url => existsSync(url));

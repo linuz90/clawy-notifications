@@ -26,7 +26,7 @@ flowchart LR
 
 **Apple and our server still know when to wake your device.** They see that a notification is on its way, and whether it's an alert or a quiet background refresh. Never what it says.
 
-**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked. On both it gives agents `clawy_guide`, which returns [`guide.md`](guide.md): what people can do with their agent in Clawy, read from the plugin itself, with no request anywhere. It has no dependencies of its own, so you can read it.
+**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked, and answers Clawy's Credentials page: which settings use each stored secret, the 1Password plugin's rules, and the names of what your gateway's 1Password service account can read, which it lists with 1Password's own `op` (so 1Password sees that request). It never reads a value ([`openclaw/credentials.ts`](openclaw/credentials.ts)). On both it gives agents `clawy_guide`, which returns [`guide.md`](guide.md): what people can do with their agent in Clawy, read from the plugin itself, with no request anywhere. It has no dependencies of its own, so you can read it.
 
 **It's for a gateway with one owner.** Every device registered with the plugin gets every alert.
 
@@ -42,7 +42,7 @@ Four steps, each in a file you can read.
 
 **3. It decides, then seals.** The same rules our relay uses pick an alert, a silent refresh or nothing ([`openclaw/route.ts`](openclaw/route.ts), and `reply_kind` in [`hermes/__init__.py`](hermes/__init__.py)). It numbers each message so it can't be shown twice, pads it to 2048 bytes, and encrypts it to your device's key with Web Push's standard `aes128gcm` (RFC 8291), using only Node's or Python's own crypto ([`openclaw/seal.ts`](openclaw/seal.ts), [`hermes/seal.py`](hermes/seal.py)).
 
-**4. It posts the sealed message to our forwarder**, with one word beside it: alert or silent. That's the only request either plugin makes to the internet. The forwarder hands it to Apple, and your device's notification extension opens it with the private key, checks its number and shows it.
+**4. It posts the sealed message to our forwarder**, with one word beside it: alert or silent. That's the only request either plugin sends to Clawy's server. The forwarder hands it to Apple, and your device's notification extension opens it with the private key, checks its number and shows it.
 
 The exact message format, what the forwarder does with it and how it answers are in [`PROTOCOL.md`](PROTOCOL.md). Both plugins and the app are tested against the same sealed messages in [`test-vectors/`](test-vectors/).
 
@@ -51,7 +51,7 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.4.10 --force --accept-capabilities
+openclaw plugins install git:linuz90/clawy-notifications#v0.5.0 --force --accept-capabilities
 openclaw plugins enable clawy-notifications
 ```
 

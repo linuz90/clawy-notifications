@@ -12,7 +12,7 @@ from .cron import CronDelivery, adapter as cron_adapter
 from . import guide
 
 LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.4.10"
+VERSION = "0.5.0"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 # Hermes puts a platform's hint in the system prompt of each chat on it, and of each scheduled job

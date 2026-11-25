@@ -106,7 +106,7 @@ export function isClawyNode(node: Node): boolean {
 function target(nodes: Node[], family: Family, command: string, nodeId: unknown): Node {
   const matching = nodes.filter(node => isClawyNode(node) && node.deviceFamily === family && node.commands?.includes(command));
   const selected = nodeId === undefined ? matching : matching.filter(node => node.nodeId === nodeId);
-  if (selected.length === 0) throw new Error(`Open Clawy on the ${family}${typeof nodeId === "string" ? ` (${nodeId})` : ""} and enable Share with Agents for this gateway, then try again.`);
+  if (selected.length === 0) throw new Error(`Open Clawy on the ${family}${typeof nodeId === "string" ? ` (${nodeId})` : ""} and turn on sharing in Settings › Connectors › This ${family}, then try again. Send them [This ${family}](clawy://settings/share-with-agents) to open it in Clawy on the ${family}.`);
   if (selected.length > 1) throw new Error(`More than one Clawy ${family} is connected. Ask the user which device to use and pass its nodeId: ${selected.map(node => `${node.displayName ?? family} (${node.nodeId})`).join(", ")}.`);
   return selected[0];
 }

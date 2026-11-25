@@ -1,7 +1,7 @@
 {
   "name": "clawy-notifications",
   "label": "Clawy notifications",
-  "version": "0.4.10",
+  "version": "0.5.0",
   "tab": { "hidden": true },
   "api": "plugin_api.py"
 }
