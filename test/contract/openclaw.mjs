@@ -53,6 +53,11 @@ try {
   // An automation's post: the transcript listener the plugin hears it on, and the field that marks it.
   assert.ok(declares("onSessionTranscriptUpdate"), "onSessionTranscriptUpdate left the SDK's types");
   assert.ok(readdirSync(types).some((file) => file.endsWith(".mjs") && readFileSync(join(types, file), "utf8").includes("openclawAutomation")), "automation posts no longer carry openclawAutomation");
+  // A failure handed to an agent (failures.ts): the version it reads and the repair turn's prompt row.
+  assert.ok(declares("PluginRuntimeCore") && declares("version: string"), "the plugin runtime no longer says its version");
+  const repair = readdirSync(types).find((file) => file.endsWith(".mjs") && readFileSync(join(types, file), "utf8").includes("Automation repair request from the scheduler"));
+  if (repair) assert.ok(readFileSync(join(types, repair), "utf8").includes("(id ${"), "the repair turn's prompt no longer names its job as (id …)");
+  assert.ok(!repair || readdirSync(types).some((file) => file.endsWith(".mjs") && readFileSync(join(types, file), "utf8").includes("source:`cron_failure_repair`")), "the repair turn's prompt row lost its cron_failure_repair source");
 
   openclaw("onboard", "--non-interactive", "--accept-risk", "--mode", "local", "--auth-choice", "skip", "--gateway-bind", "loopback", "--gateway-port", String(port),
     "--gateway-auth", "password", "--gateway-password", password, "--secret-input-mode", "ref", "--tailscale", "off", "--skip-channels", "--skip-daemon",

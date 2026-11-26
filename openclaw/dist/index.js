@@ -9,13 +9,14 @@ import { canRegister, DeviceFile, parseDevice, Sequence,             } from "./d
 import { approvalMessage, automationPostMessage, failedJobMessage, forDevice, hostKey, injectedMessage, inUseElsewhere, questionMessage, replyMessage, requestHoldMs, whileInUseElsewhere,                                  } from "./route.js";
 import { fit, seal } from "./seal.js";
 import { Activities } from "./activity.js";
+import { HeldFailures, repairBrief, repairsFailures } from "./failures.js";
 import { registerDeviceTools } from "./device-tools.js";
 import { registerConnectorApprovals } from "./connector-approvals.js";
 import { registerCredentials } from "./credentials.js";
 import { registerGuideTool } from "./guide.js";
 import { registerToolStatus } from "./tool-status.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 /** How long a reply quieted for a device waits before it's looked at again: the two minutes another
  * device counts as in use after its last stamp, plus a beat. */
 const RECHECK_MS = 150_000;
@@ -240,7 +241,9 @@ export default definePluginEntry({
     /** `judged` false: a reply no Clawy app posts an alert of its own for (a `chat.inject` message),
      * so no device is quieted for it, and each alerts as sent. `expiresAtMs`: when a request lapses. */
     /** `run`: the `generation` the event arrived in, so one still being worked out at a stop sends nothing. */
-    async function send(message                , handled = new Set        (), { judged = true, expiresAtMs, run = generation }                                                           = {}) {
+    /** `toldIn`: a failed task's alert whose agent already told the person in that chat, for the
+     * devices that alert that chat's reply to skip (`HeldFailures`). */
+    async function send(message                , handled = new Set        (), { judged = true, expiresAtMs, run = generation, toldIn }                                                                            = {}) {
       if (!message) return;
       try {
         // A reply, an approval and a question wait on who's using Clawy where, when a device can be found there.
@@ -252,6 +255,7 @@ export default definePluginEntry({
         if (request && (settled.has(request) || lapsed(expiresAtMs))) return;
         // Read after the wait: a device removed or changed meanwhile goes as it is now.
         for (const device of devices.list()) {
+          if (toldIn && forDevice({ v: 2, kind: "reply", sessionKey: toldIn }, device.muted).kind === "reply") continue;
           if (handled.has(device.id)) {
             // Shown there already: nothing held for it there goes either.
             if (request) unhold(`${device.id}\n${request}`);
@@ -313,7 +317,14 @@ export default definePluginEntry({
       respond(true, { status });
     }, { scope: "operator.write" });
 
-    api.on("cron_changed", (event) => send(failedJobMessage(event)));
+    // From 2026.11.10 a failure goes to the agent of the chat the job was made in first: failures.ts.
+    const failures = new HeldFailures((message, toldIn) => send(message, undefined, { toldIn }));
+    const holdsFailures = repairsFailures(api.runtime?.version);
+    api.on("cron_changed", (event) => {
+      const message = failedJobMessage(event);
+      if (message && holdsFailures && event.jobId) failures.failed(event.jobId, message);
+      else send(message);
+    });
     // A helper's start and end, named by the chat that spawned it: that chat's row keeps working
     // through a turn that ends while its helpers do, until their results are announced.
     api.on("subagent_progress", (event, ctx) => activities.helper(ctx?.requesterSessionKey, event?.childSessionKey, event?.phase === "started"));
@@ -332,6 +343,7 @@ export default definePluginEntry({
           if (sessionKey && event.stream === "lifecycle") {
             if (data?.phase === "start") activities.start(sessionKey, runId, typeof data.startedAt === "number" ? data.startedAt / 1000 : undefined);
             else if (data?.phase !== "end" && data?.phase !== "error") activities.resume(sessionKey, runId);
+            if (data?.phase === "error") failures.ended(sessionKey, false, runId);
             if (data?.phase === "end" || data?.phase === "error") activities.end(sessionKey, runId, data.aborted === true ? "stopped" : data.phase === "error" || data.error ? "failed" : "replied", data.yielded === true);
           }
           if (sessionKey && (event.stream === "subagent" || (event.stream === "tool" && data?.name === "sessions_spawn"))) activities.progress(sessionKey, runId);
@@ -340,13 +352,18 @@ export default definePluginEntry({
           if (seen.has(event.runId)) return;
           seen.add(event.runId);
           if (seen.size > 500) seen.delete(seen.values().next().value );
-          send(replyMessage(event));
+          const reply = replyMessage(event);
+          // A yielded run is still waiting on its helpers: its reply comes at its real end.
+          if (sessionKey && event.data.yielded !== true) failures.ended(sessionKey, reply?.kind === "reply", runId);
+          send(reply);
         });
 
         // An automation's post, or a message posted with `chat.inject`, lands in its chat by a
         // transcript commit, not a run of the chat's own. A retried commit can publish the same
         // message again: one push per message.
         const offPosts = api.runtime.events.onSessionTranscriptUpdate((update) => {
+          const brief = repairBrief(update);
+          if (brief) failures.brief(brief);
           const automation = automationPostMessage(update);
           const message = automation ?? injectedMessage(update);
           if (!message) return;
@@ -418,6 +435,7 @@ export default definePluginEntry({
         stopAll = [offEvents, offPosts, () => approvals.stop(), () => questions.stop()];
       },
       stop() {
+        failures.close();
         for (const stop of stopAll) stop();
         stopAll = [];
         stopped = true;
