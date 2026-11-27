@@ -20,13 +20,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("clawy_test_plugin", ROOT / "__init__.py",
+SPEC = importlib.util.spec_from_file_location("moonstone_test_plugin", ROOT / "__init__.py",
                                              submodule_search_locations=[str(ROOT)])
 plugin = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = plugin
 SPEC.loader.exec_module(plugin)
-from clawy_test_plugin.delivery import MAX_MUTED, Devices, Delivery, for_device, registration
-from clawy_test_plugin.seal import encode, seal
+from moonstone_test_plugin.delivery import MAX_MUTED, Devices, Delivery, for_device, registration
+from moonstone_test_plugin.seal import encode, seal
 
 
 def unbase(value):
@@ -59,7 +59,7 @@ def open_record(raw, private, auth):
 
 
 def recipient(origin="http://127.0.0.1:1"):
-    os.environ["CLAWY_FORWARDER_ORIGIN"] = origin
+    os.environ["MOONSTONE_FORWARDER_ORIGIN"] = origin
     url = f"{origin}/v1/forward/test-device"
     private = ec.generate_private_key(ec.SECP256R1())
     public = private.public_key().public_bytes(serialization.Encoding.X962,
@@ -140,8 +140,8 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(submit.call_args.args[0]["kind"], "refresh")
             observer.ended(session_id="dashboard:test", completed=True)
             self.assertEqual(submit.call_args.args[0]["kind"], "refresh")
-            observer.capture(session_id="20261108_server", turn_id="t2", assistant_response="Dashboard reply", platform="clawy")
-            observer.ended(session_id="20261108_server", turn_id="t2", completed=True, platform="clawy")
+            observer.capture(session_id="20261108_server", turn_id="t2", assistant_response="Dashboard reply", platform="moonstone")
+            observer.ended(session_id="20261108_server", turn_id="t2", completed=True, platform="moonstone")
             self.assertEqual(submit.call_args.args[0]["kind"], "reply")
             self.assertEqual(submit.call_args.args[0]["body"], "Dashboard reply")
             observer.ended(session_id="20261108_other", completed=True, platform="telegram")
@@ -175,11 +175,11 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
             app = web.Application()
             observer.wire(app, adapter)
             async with TestClient(TestServer(app)) as client:
-                endpoint = "/v1/clawy/devices"
+                endpoint = "/v1/moonstone/devices"
                 _, device = recipient()
                 self.assertEqual((await client.post(endpoint, json=device)).status, 401)
                 headers = {"Authorization": "Bearer test-profile-key"}
-                result = (await (await client.get("/v1/clawy/status", headers=headers)).json())
+                result = (await (await client.get("/v1/moonstone/status", headers=headers)).json())
                 self.assertEqual(result["liveActivities"], 2)
                 self.assertEqual((await client.post(endpoint, json={"v": 9}, headers=headers)).status, 400)
                 self.assertEqual((await client.post(endpoint, data=b"x" * (64 * 1024 + 1), headers=headers)).status, 413)
@@ -203,7 +203,7 @@ class DashboardRegistrationTests(unittest.IsolatedAsyncioTestCase):
             import httpx
         except ImportError:
             self.skipTest("Dashboard route tests need Hermes's FastAPI and httpx")
-        spec = importlib.util.spec_from_file_location("clawy_dashboard_test", ROOT / "dashboard/plugin_api.py")
+        spec = importlib.util.spec_from_file_location("moonstone_dashboard_test", ROOT / "dashboard/plugin_api.py")
         api = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(api)
         with tempfile.TemporaryDirectory() as home, patch.object(plugin, "Delivery"):

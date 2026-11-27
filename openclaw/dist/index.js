@@ -1,6 +1,6 @@
-// Clawy notifications for OpenClaw. It watches this gateway for what needs a person (replies,
+// Moonstone notifications for OpenClaw. It watches this gateway for what needs a person (replies,
 // automation posts, approvals, questions, failed scheduled tasks), seals each to the devices
-// registered here, and posts the ciphertext to Clawy's forwarder, which holds Apple's push key and
+// registered here, and posts the ciphertext to Moonstone's forwarder, which holds Apple's push key and
 // nothing that opens it. It reads no conversation history and needs no `allowConversationAccess`. See README.md.
 import { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } from "openclaw/plugin-sdk/gateway-runtime";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -16,7 +16,7 @@ import { registerCredentials } from "./credentials.js";
 import { registerGuideTool } from "./guide.js";
 import { registerToolStatus } from "./tool-status.js";
 
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 /** How long a reply quieted for a device waits before it's looked at again: the two minutes another
  * device counts as in use after its last stamp, plus a beat. */
 const RECHECK_MS = 150_000;
@@ -54,7 +54,7 @@ function askGateway   (url        , auth                                       ,
       token: auth.token,
       password: auth.password,
       clientName: "gateway-client",
-      clientDisplayName: "Clawy notifications",
+      clientDisplayName: "Moonstone notifications",
       mode: "backend",
       scopes: ["operator.read"],
       onHelloOk: () => { ask(client).then(finish, () => finish(undefined)); },
@@ -65,9 +65,9 @@ function askGateway   (url        , auth                                       ,
 }
 
 export default definePluginEntry({
-  id: "clawy-notifications",
-  name: "Clawy notifications",
-  description: "Sealed push notifications for Clawy.",
+  id: "moonstone",
+  name: "Moonstone notifications",
+  description: "Sealed push notifications for Moonstone.",
   register(api) {
     const connectorApprovals = registerConnectorApprovals(api);
     registerDeviceTools(api);
@@ -75,7 +75,7 @@ export default definePluginEntry({
     registerCredentials(api);
     registerGuideTool(api, VERSION);
     const log = api.logger;
-    const state = join(api.runtime.state.resolveStateDir(process.env), "clawy-notifications");
+    const state = join(api.runtime.state.resolveStateDir(process.env), "moonstone");
     const devices = new DeviceFile(join(state, "devices.json"));
     const sequence = new Sequence(join(state, "sequence"));
     const deliveries = new Map                  ();
@@ -117,9 +117,9 @@ export default definePluginEntry({
       // 404 stays: that's a forwarder without this route, which says nothing about the device.
       if ([401, 410].includes(response.status)) {
         devices.remove(device.id);
-        log.warn(`clawy-notifications: removed ${device.id}, the forwarder answered ${response.status}`);
+        log.warn(`moonstone: removed ${device.id}, the forwarder answered ${response.status}`);
       } else if (response.status !== 200) {
-        log.warn(`clawy-notifications: forwarder answered ${response.status}`);
+        log.warn(`moonstone: forwarder answered ${response.status}`);
       }
       return response.status;
     }
@@ -176,7 +176,7 @@ export default definePluginEntry({
         const out = whileInUseElsewhere(forDevice(pending.message, device.muted), device, state?.presence);
         if (out.kind === "reply") await deliver(device, out);
       } catch (error) {
-        log.warn(`clawy-notifications: held reply failed: ${error}`);
+        log.warn(`moonstone: held reply failed: ${error}`);
       } finally {
         if (held.get(key) === pending) held.delete(key);
       }
@@ -205,7 +205,7 @@ export default definePluginEntry({
       if (alerted.has(key)) return;
       alerted.add(key);
       if (alerted.size > 1000) alerted.delete(alerted.values().next().value );
-      deliver(device, message).catch((error) => log.warn(`clawy-notifications: send failed: ${error}`));
+      deliver(device, message).catch((error) => log.warn(`moonstone: send failed: ${error}`));
     }
 
     /** The device in use shows a request at once, in the app. The others get it only if it's still
@@ -238,7 +238,7 @@ export default definePluginEntry({
       for (const key of waiting.keys()) if (key.endsWith(`\n${request}`)) unhold(key);
     }
 
-    /** `judged` false: a reply no Clawy app posts an alert of its own for (a `chat.inject` message),
+    /** `judged` false: a reply the app doesn't alert for (a `chat.inject` message),
      * so no device is quieted for it, and each alerts as sent. `expiresAtMs`: when a request lapses. */
     /** `run`: the `generation` the event arrived in, so one still being worked out at a stop sends nothing. */
     /** `toldIn`: a failed task's alert whose agent already told the person in that chat, for the
@@ -246,7 +246,7 @@ export default definePluginEntry({
     async function send(message                , handled = new Set        (), { judged = true, expiresAtMs, run = generation, toldIn }                                                                            = {}) {
       if (!message) return;
       try {
-        // A reply, an approval and a question wait on who's using Clawy where, when a device can be found there.
+        // A reply, an approval and a question wait when the person is using the app on another known device.
         const request = message.kind === "approval" || message.kind === "question" ? requestId(message) : undefined;
         const waits = judged && (message.kind === "reply" || !!request) && !message.test && devices.list().some((device) => device.gatewayDevice);
         const present = waits ? await presence().catch(() => undefined) : undefined;
@@ -270,15 +270,15 @@ export default definePluginEntry({
           if (request) { alertRequest(device, out, request); continue; }
           if (shaped.kind === "reply" && out.kind === "refresh" && shaped.sessionKey) hold(device, shaped);
           else if (out.kind === "reply" && out.sessionKey) release(device.id, out.sessionKey);
-          deliver(device, out).catch((error) => log.warn(`clawy-notifications: send failed: ${error}`));
+          deliver(device, out).catch((error) => log.warn(`moonstone: send failed: ${error}`));
         }
       } catch (error) {
-        log.warn(`clawy-notifications: send failed: ${error}`);
+        log.warn(`moonstone: send failed: ${error}`);
       }
     }
 
     // The app registers itself over its own connection, so no key or token is typed anywhere.
-    api.registerGatewayMethod("clawy.notifications.status", ({ respond }) => {
+    api.registerGatewayMethod("moonstone.notifications.status", ({ respond }) => {
       respond(true, {
         version: VERSION,
         protocol: PROTOCOL,
@@ -291,7 +291,7 @@ export default definePluginEntry({
       });
     }, { scope: "operator.read" });
 
-    api.registerGatewayMethod("clawy.notifications.register", ({ params, respond, client }) => {
+    api.registerGatewayMethod("moonstone.notifications.register", ({ params, respond, client }) => {
       if (!canRegister(client?.connect?.scopes)) return respond(false, undefined, { code: "FORBIDDEN", message: "needs operator.approvals and operator.questions" });
       const parsed = parseDevice(params);
       if (!parsed) return respond(false, undefined, { code: "INVALID_REQUEST", message: "invalid device" });
@@ -302,18 +302,18 @@ export default definePluginEntry({
       respond(true, { ok: true });
     }, { scope: "operator.write" });
 
-    api.registerGatewayMethod("clawy.notifications.unregister", ({ params, respond, client }) => {
+    api.registerGatewayMethod("moonstone.notifications.unregister", ({ params, respond, client }) => {
       if (!canRegister(client?.connect?.scopes)) return respond(false, undefined, { code: "FORBIDDEN", message: "needs operator.approvals and operator.questions" });
       activities.remove(String(params?.id));
       respond(true, { removed: devices.remove(String(params?.id)) });
     }, { scope: "operator.write" });
 
-    api.registerGatewayMethod("clawy.notifications.test", async ({ params, respond }) => {
+    api.registerGatewayMethod("moonstone.notifications.test", async ({ params, respond }) => {
       const device = devices.list().find((d) => d.id === params?.id);
       if (!device) return respond(false, undefined, { code: "INVALID_REQUEST", message: "unknown device" });
       // `test` is the app's own nonce: a test passes on this alert, not on any alert that shows up.
       const test = typeof params?.test === "string" ? params.test.slice(0, 64) : undefined;
-      const status = await deliver(device, { v: 2, kind: "reply", title: "Clawy notifications", body: "Sealed on your gateway, opened on this device.", test }).catch(() => 0);
+      const status = await deliver(device, { v: 2, kind: "reply", title: "Moonstone notifications", body: "Sealed on your gateway, opened on this device.", test }).catch(() => 0);
       respond(true, { status });
     }, { scope: "operator.write" });
 
@@ -335,7 +335,7 @@ export default definePluginEntry({
     let stopAll                    = [];
 
     api.registerService({
-      id: "clawy-notifications",
+      id: "moonstone",
       async start(ctx) {
         stopped = false;
         const offEvents = api.runtime.events.onAgentEvent((event) => {
@@ -373,7 +373,7 @@ export default definePluginEntry({
             posted.add(id);
             if (posted.size > 500) posted.delete(posted.values().next().value );
           }
-          // Clawy on the Mac alerts for an automation's post but not for a `chat.inject` message.
+          // Moonstone on the Mac alerts for an automation's post but not for a `chat.inject` message.
           send(message, undefined, { judged: !!automation });
         });
 
@@ -381,7 +381,7 @@ export default definePluginEntry({
         // `operator.approvals` alone.
         const approvals = await createOperatorApprovalsGatewayClient({
           config: ctx.config,
-          clientDisplayName: "Clawy notifications",
+          clientDisplayName: "Moonstone notifications",
           onEvent: (frame) => {
             const payload = frame.payload                       ;
             // `openclaw.approval.*` is a change to the gateway's own setup an agent asked for.
@@ -415,7 +415,7 @@ export default definePluginEntry({
           token: auth.token,
           password: auth.password,
           clientName: "gateway-client",
-          clientDisplayName: "Clawy notifications",
+          clientDisplayName: "Moonstone notifications",
           mode: "backend",
           scopes: ["operator.questions"],
           onEvent: (frame) => {

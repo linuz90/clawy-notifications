@@ -1,15 +1,12 @@
-# Clawy notifications
+# Moonstone Plugin
 
-> [!NOTE]
-> Clawy is in internal alpha testing. "Clawy" is a working name, and the plugins, their install commands and this repo's name may still change before release.
+Plugins for [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) that keep the text of your notifications away from Moonstone's server.
 
-Plugins for [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) that keep the text of your notifications away from Clawy's server.
-
-Clawy is a closed source iPhone and iPad app for agents you host yourself. Apple only delivers notifications through a server, so by default Clawy's relay receives each alert from your gateway and decides what to show. With one of these plugins, your gateway decides instead. It seals each alert to a key that only your device holds and hands our server a blob it can't open.
+Moonstone is a closed source iPhone and iPad app for agents you host yourself. Apple only delivers notifications through a server, so by default the relay receives each alert from your gateway and decides what to show. With one of these plugins, your gateway decides instead. It seals each alert to a key that only your device holds and hands our server a blob it can't open.
 
 ```mermaid
 flowchart LR
-  G["Your gateway<br/>seals the alert"] --> S["Clawy's server<br/>can't open it"] --> A["Apple<br/>can't open it"] --> P["Your phone<br/>opens it"]
+  G["Your gateway<br/>seals the alert"] --> S["Moonstone's server<br/>can't open it"] --> A["Apple<br/>can't open it"] --> P["Your phone<br/>opens it"]
 ```
 
 ## What this protects
@@ -22,11 +19,11 @@ flowchart LR
 
 ## What it doesn't change
 
-**The app sees your chats.** Clawy is a closed source client for your gateway, so you trust it with what it shows you, as with any client. These plugins take our server out of the picture, not the app.
+**The app sees your chats.** You trust the app with what it shows you, as with any client. These plugins take our server out of the picture, not the app.
 
 **Apple and our server still know when to wake your device.** They see that a notification is on its way, and whether it's an alert or a quiet background refresh. Never what it says.
 
-**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to Clawy, where each sharing and per-agent permission is checked, and answers Clawy's Credentials page: which settings use each stored secret, the 1Password plugin's rules, and the names of what your gateway's 1Password service account can read, which it lists with 1Password's own `op` (so 1Password sees that request). It never reads a value ([`openclaw/credentials.ts`](openclaw/credentials.ts)). On both it gives agents `clawy_guide`, which returns [`guide.md`](guide.md): what people can do with their agent in Clawy, read from the plugin itself, with no request anywhere. It has no dependencies of its own, so you can read it.
+**The plugin runs inside your gateway.** It sees your alerts. On OpenClaw it also routes device tools to the app, which checks sharing and per-agent permissions. The plugin also answers the app's Credentials page: which settings use each stored secret, the 1Password plugin's rules, and the names of what your gateway's 1Password service account can read, which it lists with 1Password's own `op` (so 1Password sees that request). It never reads a value ([`openclaw/credentials.ts`](openclaw/credentials.ts)). On both it gives agents `moonstone_guide`, which returns [`guide.md`](guide.md): what people can do with their agent in Moonstone, read from the plugin itself, with no request anywhere. It has no dependencies of its own, so you can read it.
 
 **It's for a gateway with one owner.** Every device registered with the plugin gets every alert.
 
@@ -36,13 +33,13 @@ More on what it does and doesn't guard against: [`SECURITY.md`](SECURITY.md).
 
 Four steps, each in a file you can read.
 
-**1. Your device registers itself.** When you turn on the notification plugin, Clawy makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's authenticated dashboard connection. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
+**1. Your device registers itself.** When you turn on the notification plugin, the app makes a key pair on your device and keeps the private half in its Keychain. It gives your gateway the public half, plus an address and token for our forwarder, over its own connection: an OpenClaw gateway method that needs approval and question rights, or Hermes's authenticated dashboard connection. The plugin keeps that in a file on your gateway, and refuses any forwarder address but ours, so registering a device can't point your gateway somewhere else. OpenClaw: [`openclaw/devices.ts`](openclaw/devices.ts). Hermes: [`hermes/delivery.py`](hermes/delivery.py).
 
-**2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, an automation's post into a chat, a message posted with `chat.inject`, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it uses reply and human-input hooks ([`hermes/__init__.py`](hermes/__init__.py)). Its send-only cron platform also writes an automation result back into the Clawy chat that scheduled it, then sends its sealed reply alert ([Hermes details](hermes/README.md#cron-results-in-a-clawy-chat)).
+**2. It listens for what should alert.** On OpenClaw, that's the end of each agent run, an automation's post into a chat, a message posted with `chat.inject`, approval requests, questions and failed scheduled tasks. For approvals and questions it signs in to its own gateway on `127.0.0.1`, as an app would ([`openclaw/index.ts`](openclaw/index.ts)). On Hermes, it uses reply and human-input hooks ([`hermes/__init__.py`](hermes/__init__.py)). Its send-only cron platform also writes an automation result back into the chat that scheduled it, then sends its sealed reply alert ([Hermes details](hermes/README.md#cron-results-in-a-moonstone-chat)).
 
 **3. It decides, then seals.** The same rules our relay uses pick an alert, a silent refresh or nothing ([`openclaw/route.ts`](openclaw/route.ts), and `reply_kind` in [`hermes/__init__.py`](hermes/__init__.py)). It numbers each message so it can't be shown twice, pads it to 2048 bytes, and encrypts it to your device's key with Web Push's standard `aes128gcm` (RFC 8291), using only Node's or Python's own crypto ([`openclaw/seal.ts`](openclaw/seal.ts), [`hermes/seal.py`](hermes/seal.py)).
 
-**4. It posts the sealed message to our forwarder**, with one word beside it: alert or silent. That's the only request either plugin sends to Clawy's server. The forwarder hands it to Apple, and your device's notification extension opens it with the private key, checks its number and shows it.
+**4. It posts the sealed message to our forwarder**, with one word beside it: alert or silent. That's the only request either plugin sends to our server. The forwarder hands it to Apple, and your device's notification extension opens it with the private key, checks its number and shows it.
 
 The exact message format, what the forwarder does with it and how it answers are in [`PROTOCOL.md`](PROTOCOL.md). Both plugins and the app are tested against the same sealed messages in [`test-vectors/`](test-vectors/).
 
@@ -51,32 +48,32 @@ The exact message format, what the forwarder does with it and how it answers are
 ### OpenClaw
 
 ```sh
-openclaw plugins install git:linuz90/clawy-notifications#v0.5.1 --force --accept-capabilities
-openclaw plugins enable clawy-notifications
+openclaw plugins install git:linuz90/moonstone-plugin#v0.6.0 --force --accept-capabilities
+openclaw plugins enable moonstone
 ```
 
-`--force` is OpenClaw's confirmation for anything outside ClawHub's review, and `--accept-capabilities` accepts what the plugin declares. Both commands are needed: install can leave the plugin disabled. No restart. If you turned on owner access in Clawy, Settings › Notifications › OpenClaw Notification Plugin can do this for you.
+`--force` is OpenClaw's confirmation for anything outside ClawHub's review, and `--accept-capabilities` accepts what the plugin declares. Both commands are needed: install can leave the plugin disabled. No restart. If you turned on owner access in Moonstone, Settings › Notifications › Moonstone Plugin can do this for you.
 
 ### Hermes Agent
 
 ```sh
-hermes plugins install linuz90/clawy-notifications#hermes --enable
+hermes plugins install linuz90/moonstone-plugin#hermes --enable
 ```
 
-Install it in every profile selected in Clawy, using `hermes -p <profile> plugins install … --enable` for named profiles. Restart Hermes after installation to load its observers and routes; current dashboards can hot-mount the routes, while the legacy API listener mounts only at startup. To pin a reviewed commit, add `--ref <40-character-sha>`.
+Install it in every profile selected in Moonstone, using `hermes -p <profile> plugins install … --enable` for named profiles. Restart Hermes after installation to load its observers and routes; current dashboards can hot-mount the routes, while the legacy API listener mounts only at startup. To pin a reviewed commit, add `--ref <40-character-sha>`.
 
-### Then, in Clawy
+### Then, in Moonstone
 
-Open Settings › Notifications › OpenClaw Notification Plugin (Hermes Notification Plugin on Hermes) and turn on Use the Plugin. Clawy finds the plugin and registers this device itself, so you never copy a key. Send Test passes only if this device opened the alert.
+Open Settings › Notifications › Moonstone Plugin and turn on Use the Plugin. The app finds the plugin and registers this device itself, so you never copy a key. Send Test passes only if this device opened the alert.
 
-If the plugin stops working, Clawy says so on its chat list. It never moves you back to our relay on its own.
+If the plugin stops working, the chat list shows a notice. It never moves you back to our relay on its own.
 
 ## What's here
 
 | Path | What it is |
 | --- | --- |
 | [`PROTOCOL.md`](PROTOCOL.md) | The wire format, and what our forwarder does with it |
-| [`guide.md`](guide.md) | What agents read when asked what they can do in Clawy (`clawy_guide`); `npm run build` copies it into `hermes/` |
+| [`guide.md`](guide.md) | What agents read when asked what they can do in Moonstone (`moonstone_guide`); `npm run build` copies it into `hermes/` |
 | [`openclaw/`](openclaw/) | The OpenClaw plugin. `dist/` is the same code with the types stripped |
 | [`hermes/`](hermes/) | The Hermes plugin |
 | [`test-vectors/`](test-vectors/) | Sealed messages and replay steps both plugins and the app are tested against |
@@ -101,6 +98,6 @@ MIT. Reporting a security problem: [`SECURITY.md`](SECURITY.md).
 
 A device can name the chats it muted (plugin 0.4.6, `mutes: 1`): a reply in one goes out as a silent refresh instead of an alert, while approvals and questions still alert; see [the protocol](PROTOCOL.md#muted-chats).
 
-While Clawy is in use on one of your devices, the OpenClaw plugin (0.4.7) sends your other devices a silent refresh instead of a reply's alert, and if you leave that device with the reply unread, it alerts on the others two and a half minutes later. An approval or a question shows first on the device in use, and reaches the others only if it's still unanswered a minute later. It reads who is using Clawy where from your gateway's own presence list, for each reply, on your gateway: which devices and when stay there. Our forwarder and Apple see only that a reply went out as a silent refresh rather than an alert, as for a muted chat. See [the protocol](PROTOCOL.md#in-use-elsewhere).
+While Moonstone is in use on one of your devices, the OpenClaw plugin (0.4.7) sends your other devices a silent refresh instead of a reply's alert, and if you leave that device with the reply unread, it alerts on the others two and a half minutes later. An approval or a question shows first on the device in use, and reaches the others only if it's still unanswered a minute later. For each reply, the plugin reads which devices are in use from your gateway's own presence list. The list stays on your gateway. Our forwarder and Apple see only that a reply went out as a silent refresh rather than an alert, as for a muted chat. See [the protocol](PROTOCOL.md#in-use-elsewhere).
 
 Optional Live Activities need OpenClaw plugin 0.3.0 or Hermes plugin 0.4.0 (`liveActivities: 2`). They forward generic run phase and wait counts for up to four followed chats per device, separately from sealed alerts; see [the protocol](PROTOCOL.md#live-activities-version-2). Conversation content stays on the sealed route.

@@ -1,4 +1,4 @@
-"""Real Hermes contracts, isolated from any paired home. Set CLAWY_HERMES_SOURCE to run."""
+"""Real Hermes contracts, isolated from any paired home. Set MOONSTONE_HERMES_SOURCE to run."""
 import asyncio
 import importlib.util
 import os
@@ -14,7 +14,7 @@ import unittest
 
 
 class CronContractTests(unittest.TestCase):
-    @unittest.skipUnless(os.environ.get('CLAWY_HERMES_SOURCE'), 'Set CLAWY_HERMES_SOURCE to the Hermes source checkout')
+    @unittest.skipUnless(os.environ.get('MOONSTONE_HERMES_SOURCE'), 'Set MOONSTONE_HERMES_SOURCE to the Hermes source checkout')
     def test_scheduled_results_and_routing(self):
         result = subprocess.run([sys.executable, str(Path(__file__).resolve()), 'probe'],
                                 capture_output=True, text=True)
@@ -47,13 +47,13 @@ class Store:
         holder = 'compression-test'
         if self.store is None:
             assert self.db.try_acquire_compression_lock(parent, holder)
-            self.db.publish_compression_child(parent_session_id=parent, child_session_id=child, source='clawy',
+            self.db.publish_compression_child(parent_session_id=parent, child_session_id=child, source='moonstone',
                                               messages=[{'role': 'user', 'content': handoff}], compression_lock_holder=holder)
             return
         from persistence.conversation.lineage import CompressionChild
         from persistence.conversation.messages import NewMessage
         assert self.store.coordination.try_acquire_compression_lock(session_id=parent, holder=holder)
-        self.store.lineage.publish_compression_child(parent, CompressionChild(session_id=child, source='clawy'),
+        self.store.lineage.publish_compression_child(parent, CompressionChild(session_id=child, source='moonstone'),
                                                      [NewMessage(role='user', content=handoff)], compression_lock_holder=holder)
 
     def hide(self, session):
@@ -132,8 +132,8 @@ async def check_terminal_reset(home, db, store, delivery, alerts):
 
 
 def probe():
-    sys.path.insert(0, os.environ['CLAWY_HERMES_SOURCE'])
-    with tempfile.TemporaryDirectory(prefix='clawy-cron-') as folder:
+    sys.path.insert(0, os.environ['MOONSTONE_HERMES_SOURCE'])
+    with tempfile.TemporaryDirectory(prefix='moonstone-cron-') as folder:
         home = Path(folder)
         os.environ['HERMES_HOME'] = folder
         os.environ.pop('HERMES_PROFILE', None)
@@ -143,7 +143,7 @@ def probe():
         from cron.scheduler_delivery import _deliver_result, _is_known_delivery_platform
         from cron.delivery_queue import enqueue, drain, get_status
         root = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location('clawy_cron_contract', root / '__init__.py', submodule_search_locations=[str(root)])
+        spec = importlib.util.spec_from_file_location('moonstone_cron_contract', root / '__init__.py', submodule_search_locations=[str(root)])
         plugin = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = plugin
         spec.loader.exec_module(plugin)
@@ -152,12 +152,12 @@ def probe():
         plugin.CronDelivery._work = lambda self: self.first_pass.set()
         manager = get_plugin_manager()
         manager.discover_and_load()
-        ctx = PluginContext(PluginManifest(name='clawy-contract', key='clawy-contract', source='user'), manager)
+        ctx = PluginContext(PluginManifest(name='moonstone-contract', key='moonstone-contract', source='user'), manager)
         plugin.register(ctx)
-        assert _is_known_delivery_platform('clawy'), 'cron preflight must recognize the platform'
+        assert _is_known_delivery_platform('moonstone'), 'cron preflight must recognize the platform'
         from agent.system_prompt import platform_hint
-        assert platform_hint(SimpleNamespace(platform='clawy')) == plugin.PLATFORM_HINT, \
-            "a Clawy chat's system prompt must say how to send a file"
+        assert platform_hint(SimpleNamespace(platform='moonstone')) == plugin.PLATFORM_HINT, \
+            "a Moonstone chat's system prompt must say how to send a file"
         observer = plugin._notifications
         alerts = []
         observer.delivery.submit = alerts.append
@@ -166,8 +166,8 @@ def probe():
         # The plugin's adapter for this Hermes's session store, where faults are injected.
         with plugin.cron._sessions(home) as state:
             notes, contention = type(state), state.contention[0]
-        sid = 'clawy-original'
-        db.create_session(sid, source='clawy')
+        sid = 'moonstone-original'
+        db.create_session(sid, source='moonstone')
         db.append_message(sid, 'user', content='Schedule this')
         db.create_session('telegram-session', source='telegram')
         db.create_session('terminal-session', source='cli')
@@ -176,20 +176,20 @@ def probe():
         store.hide('room-session')
         # Hermes's own delegate child keeps its parent's source and says what it is in model_config.
         store.delegate('delegate-session', 'terminal-session', 'cli')
-        # (deliver, routed from a Clawy chat, routed from any other surface). Hermes's own
+        # (deliver, routed from a Moonstone chat, routed from any other surface). Hermes's own
         # `local:<chat>` lane refuses a dashboard chat at every fire (no gateway receipt).
-        cases = [(None, 'clawy:' + sid, None), ('origin', 'clawy:' + sid, 'origin'), ('local', 'local', 'local'),
+        cases = [(None, 'moonstone:' + sid, None), ('origin', 'moonstone:' + sid, 'origin'), ('local', 'local', 'local'),
                  ('telegram:123', 'telegram:123', 'telegram:123'),
-                 ('origin,telegram:123', f'clawy:{sid},telegram:123', 'origin,telegram:123'),
-                 ('local:' + sid, 'clawy:' + sid, 'clawy:' + sid),
-                 (f' local:{sid} ,telegram:123', f'clawy:{sid},telegram:123', f'clawy:{sid},telegram:123'),
-                 (f'local:{sid},origin', 'clawy:' + sid, f'clawy:{sid},origin'),
+                 ('origin,telegram:123', f'moonstone:{sid},telegram:123', 'origin,telegram:123'),
+                 ('local:' + sid, 'moonstone:' + sid, 'moonstone:' + sid),
+                 (f' local:{sid} ,telegram:123', f'moonstone:{sid},telegram:123', f'moonstone:{sid},telegram:123'),
+                 (f'local:{sid},origin', 'moonstone:' + sid, f'moonstone:{sid},origin'),
                  ('local:telegram-session', 'local:telegram-session', 'local:telegram-session'),
                  ('local:missing-session', 'local:missing-session', 'local:missing-session')]
         # Each surface's turn as Hermes binds it: a messaging app and the terminal name their own
-        # lane; a dashboard turn names none, so one in the Clawy chat that lost its source (a resume
-        # without it) is the Clawy chat's too.
-        turns = dict(clawy=dict(source='clawy', session_key=sid), resumed=dict(source='tui', session_key=sid, ui_session_id='tab'),
+        # lane; a dashboard turn names none, so one in the Moonstone chat that lost its source (a resume
+        # without it) is the Moonstone chat's too.
+        turns = dict(moonstone=dict(source='moonstone', session_key=sid), resumed=dict(source='tui', session_key=sid, ui_session_id='tab'),
                      # An editor's ACP turn names no lane either, but no dashboard tab: Hermes's own fallback.
                      acp=dict(source='', session_key=sid),
                      telegram=dict(platform='telegram', chat_id='123', source='telegram', session_key='agent:main:telegram:dm:123'),
@@ -197,20 +197,20 @@ def probe():
                                    session_key='agent:main:local:dm:terminal-session'))
         for surface, turn in turns.items():
             set_session_vars(session_id=sid, cron_session='', **turn)
-            for delivery, from_clawy, from_other in cases:
+            for delivery, from_moonstone, from_other in cases:
                 args = dict(action='create', prompt='Safe result', schedule='every 1h')
                 if delivery is not None:
                     args['deliver'] = delivery
                 block, changed = _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)
                 changed = changed or args
-                expected = from_clawy if surface in ('clawy', 'resumed') else from_other
+                expected = from_moonstone if surface in ('moonstone', 'resumed') else from_other
                 if surface == 'acp' and delivery == 'local:' + sid:
-                    expected = from_clawy  # an explicit Clawy chat reroutes from any turn
+                    expected = from_moonstone  # an explicit Moonstone chat reroutes from any turn
                 assert changed.get('deliver') == expected, (surface, delivery, changed)
                 assert changed['prompt'] == args['prompt'] and block is None
-        # Asked from Clawy in a chat begun elsewhere, a dashboard turn with no lane of its own: the
+        # Asked from Moonstone in a chat begun elsewhere, a dashboard turn with no lane of its own: the
         # result goes into that chat, never into one of Hermes's own sessions or one that's gone.
-        for chat, expected in (('terminal-session', 'clawy:terminal-session'), ('telegram-session', 'clawy:telegram-session'),
+        for chat, expected in (('terminal-session', 'moonstone:terminal-session'), ('telegram-session', 'moonstone:telegram-session'),
                                ('cron-session', None), ('room-session', None), ('delegate-session', None),
                                ('missing-session', None)):
             set_session_vars(source='tui', session_id=chat, session_key=chat, ui_session_id='tab', cron_session='')
@@ -222,8 +222,8 @@ def probe():
         set_session_vars(source='tui', session_id='terminal-session', session_key='terminal-session', cron_session='1')
         args = dict(action='create', prompt='Safe result', schedule='every 1h')
         assert (_dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id='terminal-session')[1] or args) == args
-        # A Clawy chat's turn the gateway owner runs binds it as a local chat with no source.
-        for chat, expected in ((sid, 'clawy:' + sid), ('telegram-session', None), ('missing-session', None)):
+        # A Moonstone chat's turn the gateway owner runs binds it as a local chat with no source.
+        for chat, expected in ((sid, 'moonstone:' + sid), ('telegram-session', None), ('missing-session', None)):
             set_session_vars(platform='local', chat_id=chat, session_id=chat, session_key='agent:main:local:' + chat,
                              source='', cron_session='')
             args = dict(action='create', prompt='Safe result', schedule='every 1h', failure_deliver='origin')
@@ -236,20 +236,20 @@ def probe():
         with patch.object(plugin.cron, '_sessions', side_effect=OSError('store unavailable')):
             block, _ = _dispatch_pre_tool_call_hooks('cronjob_manage', dict(action='create', schedule='every 1h'), session_id=sid)
         assert block, 'an unreadable store must refuse the create'
-        set_session_vars(platform='', chat_id='', source='clawy', session_id=sid, session_key=sid, cron_session='')
+        set_session_vars(platform='', chat_id='', source='moonstone', session_id=sid, session_key=sid, cron_session='')
         for value in ('', ' Origin ', ['origin']):
             args = dict(action=' Create ', deliver=value)
             changed = _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)[1]
-            assert changed['deliver'] == 'clawy:' + sid, changed
+            assert changed['deliver'] == 'moonstone:' + sid, changed
         args = dict(action='update', job_id='anything', deliver='origin')
         assert (_dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)[1] or args) == args
         # Updating a job that delivers to `local:<chat>` repairs it.
         args = dict(action='update', job_id='anything', deliver=['local:' + sid])
-        assert _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)[1]['deliver'] == 'clawy:' + sid
+        assert _dispatch_pre_tool_call_hooks('cronjob_manage', args, session_id=sid)[1]['deliver'] == 'moonstone:' + sid
         # No YAML platform configuration: enabling this plugin is enough.
         (home / 'config.yaml').write_text('cron:\n  wrap_response: false\n')
         from cron.scheduler_preflight import _preflight_check_delivery
-        job = dict(id='job', name='Safe reminder', deliver='clawy:' + sid, execution_id='run-1')
+        job = dict(id='job', name='Safe reminder', deliver='moonstone:' + sid, execution_id='run-1')
         assert _preflight_check_delivery(job) is None, _preflight_check_delivery(job)
         holder = '{"pid":' + str(os.getpid()) + '}'
         assert store.hold_turn(sid, holder)
@@ -267,7 +267,7 @@ def probe():
         observer.cron.flush()
         rows = db.get_messages(sid)
         assert len(rows) == 2, rows
-        assert rows[-1]['role'] == 'user' and rows[-1]['display_metadata']['clawy_automation'] is True
+        assert rows[-1]['role'] == 'user' and rows[-1]['display_metadata']['moonstone_automation'] is True
         assert rows[-1]['content'] == 'Same result'
         assert alerts[-1]['sessionKey'] == 'agent:default:' + sid and alerts[-1]['kind'] == 'reply'
         observer.cron.flush()
@@ -291,31 +291,31 @@ def probe():
         observer.cron.flush()
         assert len(db.get_messages(sid)) == 4
         # Compression moves the physical transcript while the original delivery route stays stable.
-        store.compress(sid, 'clawy-tip', 'Compacted handoff')
+        store.compress(sid, 'moonstone-tip', 'Compacted handoff')
         assert _deliver_result(dict(job, execution_id='run-3'), 'After compression', adapters={}) is None
         observer.cron.flush()
-        assert db.get_messages('clawy-tip')[-1]['content'] == 'After compression'
-        assert alerts[-1]['sessionKey'] == 'agent:default:clawy-tip'
+        assert db.get_messages('moonstone-tip')[-1]['content'] == 'After compression'
+        assert alerts[-1]['sessionKey'] == 'agent:default:moonstone-tip'
         # A sibling profile with the same session id writes only its own state and push route.
         sibling = home / 'profiles' / 'writer'
         sibling.mkdir(parents=True)
         other = acquire(sibling / 'state.db')
-        other.create_session(sid, source='clawy')
+        other.create_session(sid, source='moonstone')
         other_alerts = []
         sender = plugin.CronDelivery(sibling, lambda *args, **kwargs: other_alerts.append((args, kwargs)))
         assert asyncio.run(sender.send(None, sid, 'Writer only'))['success']
         sender.flush()
         assert other.get_messages(sid)[-1]['content'] == 'Writer only'
-        assert db.get_messages('clawy-tip')[-1]['content'] == 'After compression'
+        assert db.get_messages('moonstone-tip')[-1]['content'] == 'After compression'
         assert len(other_alerts) == 1
-        # Jobs saved before the hook routed them name a Clawy chat through `local:`, directly or as
+        # Jobs saved before the hook routed them name a Moonstone chat through `local:`, directly or as
         # their origin. Each profile repairs its own store, and only those legs.
         from cron import jobs
         local = {'platform': 'local', 'chat_id': sid}
-        saved = dict(origin=(dict(deliver='origin', origin=local), 'clawy:' + sid, None),
-                     explicit=(dict(deliver='local:' + sid, failure_deliver='origin', origin=local), 'clawy:' + sid, 'clawy:' + sid),
-                     mixed=(dict(deliver='origin,telegram:123', origin=local), f'clawy:{sid},telegram:123', None),
-                     paused=(dict(deliver='origin', origin=local, paused=True), 'clawy:' + sid, None),
+        saved = dict(origin=(dict(deliver='origin', origin=local), 'moonstone:' + sid, None),
+                     explicit=(dict(deliver='local:' + sid, failure_deliver='origin', origin=local), 'moonstone:' + sid, 'moonstone:' + sid),
+                     mixed=(dict(deliver='origin,telegram:123', origin=local), f'moonstone:{sid},telegram:123', None),
+                     paused=(dict(deliver='origin', origin=local, paused=True), 'moonstone:' + sid, None),
                      host=(dict(deliver='local', origin=local), 'local', None),
                      foreign=(dict(deliver='origin', origin=dict(local, chat_id='telegram-session')), 'origin', None),
                      telegram=(dict(deliver='origin', origin={'platform': 'telegram', 'chat_id': '123'}), 'origin', None),
@@ -328,7 +328,7 @@ def probe():
         for name, schedule in (('stale', {'kind': 'once', 'run_at': '2020-01-01T00:00:00+00:00', 'display': 'once'}),
                                ('unscheduled', None)):
             made[name] = jobs.create_job('Safe result', 'every 1h', name=name, deliver='origin', origin=local)['id']
-            saved[name] = (None, 'clawy:' + sid, None)
+            saved[name] = (None, 'moonstone:' + sid, None)
             with jobs._jobs_lock():
                 records = jobs.load_jobs()
                 record = next(job for job in records if job['id'] == made[name])
@@ -342,7 +342,7 @@ def probe():
             plugin.CronDelivery(sibling, lambda *args, **kwargs: None).close()
             assert {name: jobs.get_job(job_id) for name, job_id in made.items()} == before, 'a profile repaired another profile\'s jobs'
             with jobs.use_cron_store(sibling):
-                assert jobs.get_job(writer_job)['deliver'] == 'clawy:' + sid
+                assert jobs.get_job(writer_job)['deliver'] == 'moonstone:' + sid
             # A busy job lock delays the repair, never the plugin's registration.
             held, release = threading.Event(), threading.Event()
             def hold():
@@ -375,11 +375,11 @@ def probe():
             assert observer.cron.repair_jobs()
         sender.close()
         release_or_close(other)
-        # A chat begun in the terminal gets the same automation post and push as a Clawy chat.
+        # A chat begun in the terminal gets the same automation post and push as a Moonstone chat.
         assert asyncio.run(observer.cron.send(None, 'terminal-session', 'Check the basil'))['success']
         observer.cron.flush()
         posted = db.get_messages('terminal-session')[-1]
-        assert posted['content'] == 'Check the basil' and posted['display_metadata']['clawy_automation'] is True
+        assert posted['content'] == 'Check the basil' and posted['display_metadata']['moonstone_automation'] is True
         assert alerts[-1]['sessionKey'] == 'agent:default:terminal-session' and alerts[-1]['kind'] == 'reply'
         asyncio.run(check_terminal_reset(home, db, store, observer.cron, alerts))
         # Hermes's own sessions and missing ones must never get a note or push.
@@ -392,23 +392,23 @@ def probe():
         image.write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(64))
         assert _deliver_result(dict(job, execution_id='image-standalone'), f'Chart\nMEDIA:{image}', adapters={}) is None
         observer.cron.flush()
-        assert f'[Image attached at: {image}]' in db.get_messages('clawy-tip')[-1]['content']
+        assert f'[Image attached at: {image}]' in db.get_messages('moonstone-tip')[-1]['content']
         assert _deliver_result(dict(job, execution_id='image-only'), f'MEDIA:{image}', adapters={}) is None
         observer.cron.flush()
-        assert f'[Image attached at: {image}]' in db.get_messages('clawy-tip')[-1]['content']
+        assert f'[Image attached at: {image}]' in db.get_messages('moonstone-tip')[-1]['content']
         assert alerts[-1]['body'] == 'Image', alerts[-1]
         assert str(image) not in alerts[-1]['body']
         loop = asyncio.new_event_loop()
         runner = threading.Thread(target=loop.run_forever)
         runner.start()
-        config = load_gateway_config().platforms[Platform('clawy')]
+        config = load_gateway_config().platforms[Platform('moonstone')]
         live = plugin.cron_adapter(observer.cron, config)
         try:
             asyncio.run_coroutine_threadsafe(live.connect(), loop).result(5)
             assert _deliver_result(dict(job, execution_id='image-live'), f'Live chart\nMEDIA:{image}',
-                                   adapters={Platform('clawy'): live}, loop=loop) is None
+                                   adapters={Platform('moonstone'): live}, loop=loop) is None
             observer.cron.flush()
-            last = db.get_messages('clawy-tip')[-2:]
+            last = db.get_messages('moonstone-tip')[-2:]
             assert any('Live chart' in row['content'] for row in last)
             assert any(f'[Image attached at: {image}]' in row['content'] for row in last)
             assert not any("Couldn't deliver" in row['content'] for row in last)
@@ -480,7 +480,7 @@ def probe():
             return original(self, target, receipt, content)
         with patch.object(notes, 'note', poisoned):
             observer.cron.flush()
-        assert db.get_messages('clawy-tip')[-1]['content'] == 'Still delivered'
+        assert db.get_messages('moonstone-tip')[-1]['content'] == 'Still delivered'
         observer.cron.flush()
         # Empty inboxes never acquire the Hermes store or rewrite the inbox file.
         idle_mtime = observer.cron.file.stat().st_mtime_ns

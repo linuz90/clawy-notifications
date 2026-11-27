@@ -103,10 +103,12 @@ export function questionMessage(event        , payload                     )    
   return { v: 2, kind: "question", questionId: payload.id, body: payload.questions?.[0]?.question, sessionKey: payload.sessionKey, agentId: payload.agentId };
 }
 
-/** The `cron_changed` hook: a scheduled task that finished with an error. */
-export function failedJobMessage(event                                                                                               )                 {
+/** The `cron_changed` hook: a scheduled task that finished with an error. Its agent, so the alert
+ * comes from it: with several agents or gateways, a job's name alone doesn't say whose it is. */
+export function failedJobMessage(event                                                                                                                                   )                 {
   if (event.action !== "finished" || event.status !== "error") return null;
-  return { v: 2, kind: "task-failed", jobId: event.jobId, title: event.job?.name ? `${event.job.name} failed` : "Scheduled task failed", body: event.error };
+  return { v: 2, kind: "task-failed", jobId: event.jobId, agentId: event.agentId ?? event.job?.agentId,
+           title: event.job?.name ? `${event.job.name} failed` : "Scheduled task failed", body: event.error };
 }
 
 /** The chat a guest's session speaks in (`agent:atlas:ios-native-1-guest-of-juno` in
@@ -126,10 +128,10 @@ export function hostKey(sessionKey        )                     {
 
 
 
-/** Clawy's own apps. The Control UI doesn't count: someone in a browser tab may well be elsewhere. */
-const CLAWY_APPS = new Set(["openclaw-ios", "openclaw-macos"]);
+/** Presence entries from the Moonstone app. The Control UI doesn't count: someone in a browser tab may well be elsewhere. */
+const MOONSTONE_APPS = new Set(["openclaw-ios", "openclaw-macos"]);
 /** An app says it's in use every 30 s (`presence.activity`), and counts as in use for two minutes
- * after. The app quiets its own alerts by the same rule (`AlertQuiet` in Clawy). */
+ * after. The app quiets its own alerts by the same rule (`AlertQuiet`). */
 const IN_USE_MS = 120_000;
 /** Another device quiets this one only when used more recently by more than one beat: each side
  * judges at its own moment, and a stamp landing between them then makes two alerts, never none. */
@@ -139,7 +141,7 @@ const MARGIN_MS = 30_000;
  * use and shows it first. */
 const REQUEST_HOLD_MS = 60_000;
 
-/** Whether Clawy was used more recently on another of this person's devices (by more than a beat),
+/** Whether Moonstone was used more recently on another of this person's devices (by more than a beat),
  * a Mac being typed on or an iPhone open, in the last two minutes. False for a device registered
  * before the plugin knew its gateway id, and for a list that couldn't be read: both alert as before. */
 export function inUseElsewhere(device                                             , presence                             , now = Date.now())          {
@@ -152,7 +154,7 @@ export function inUseElsewhere(device                                           
   // This device's own last use counts after its connection closed: an iPhone left a moment ago is
   // still the one used last, and an older Mac, seeing it gone, already stayed quiet.
   const here = Math.max(-Infinity, ...presence.filter((entry) => entry && typeof entry === "object" && entry.deviceId === device.gatewayDevice).map(used));
-  const elsewhere = Math.max(-Infinity, ...live.filter((entry) => CLAWY_APPS.has(entry.clientId ?? "") && !!entry.deviceId && entry.deviceId !== device.gatewayDevice
+  const elsewhere = Math.max(-Infinity, ...live.filter((entry) => MOONSTONE_APPS.has(entry.clientId ?? "") && !!entry.deviceId && entry.deviceId !== device.gatewayDevice
     && !(device.person && entry.user?.id && entry.user.id !== device.person)).map(used));
   return elsewhere > now - IN_USE_MS && elsewhere > here + MARGIN_MS;
 }

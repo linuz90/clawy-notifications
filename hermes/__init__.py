@@ -1,4 +1,4 @@
-"""Hermes observers and authenticated registration for Clawy sealed notifications."""
+"""Hermes observers and authenticated registration for Moonstone sealed notifications."""
 
 import asyncio
 import json
@@ -11,15 +11,15 @@ from .activity import Activities
 from .cron import CronDelivery, adapter as cron_adapter
 from . import guide
 
-LOG = logging.getLogger("clawy.notifications")
-VERSION = "0.5.0"
+LOG = logging.getLogger("moonstone.notifications")
+VERSION = "0.6.0"
 PROTOCOL = 2  # Bumped whenever a device needs something new from this plugin. PROTOCOL.md.
 
 # Hermes puts a platform's hint in the system prompt of each chat on it, and of each scheduled job
-# delivering to it. Without one, a Clawy chat was told nothing about files, and its agent offered to
-# send a ZIP through Telegram. Clawy shows each MEDIA: line in a reply as the file, as Hermes Desktop does.
+# delivering to it. Without one, a Moonstone chat was told nothing about files, and its agent offered to
+# send a ZIP through Telegram. Moonstone shows each MEDIA: line in a reply as the file, as Hermes Desktop does.
 PLATFORM_HINT = (
-    "You are chatting with the person in Clawy, a native iPhone, iPad and Mac app. Markdown renders: tables, "
+    "You are chatting with the person in Moonstone, a native iPhone, iPad and Mac app. Markdown supports tables, "
     "task lists, code, Mermaid diagrams, and math in \\(...\\) or $$...$$. Deliver files by writing "
     "MEDIA:/absolute/path/to/file on a line of its own, any file type: pictures and videos show in the chat, "
     "everything else becomes a file the person can open, save and share. A file sent this way reaches them "
@@ -28,7 +28,7 @@ PLATFORM_HINT = (
 
 
 def reply_kind(session, platform=""):
-    if platform == "clawy" or session.startswith("ios-native-"):
+    if platform == "moonstone" or session.startswith("ios-native-"):
         return "reply"
     if (session == "main" or session.endswith(":heartbeat")
             or session.startswith(("cron:", "subagent:", "cron_"))):
@@ -155,7 +155,7 @@ class Notifications:
             except (ValueError, TypeError, KeyError, UnicodeError):
                 return web.json_response({"error": "Invalid registration"}, status=400)
             except OSError:
-                LOG.warning("Clawy device file unavailable")
+                LOG.warning("Moonstone device file unavailable")
                 return web.json_response({"error": "Device file unavailable"}, status=503)
             return web.json_response({"ok": True})
 
@@ -170,7 +170,7 @@ class Notifications:
             found = await asyncio.to_thread(device, request)
             if found is None:
                 return web.json_response({"error": "Unknown device"}, status=404)
-            alert = {"v": 2, "kind": "reply", "title": "Clawy notifications",
+            alert = {"v": 2, "kind": "reply", "title": "Moonstone notifications",
                      "body": "Sealed on your Hermes, opened on this device."}
             # The app's own nonce: a test passes on this alert, not on any alert that shows up.
             sent = await request.json() if request.can_read_body else {}
@@ -179,19 +179,19 @@ class Notifications:
             try:
                 code = await asyncio.to_thread(self.delivery.send, found, alert)
             except Exception:
-                LOG.warning("Clawy push failed")  # Exception text can contain secrets.
+                LOG.warning("Moonstone push failed")  # Exception text can contain secrets.
                 code = 0
             return web.json_response({"status": code})
 
         # Hermes's earlier /p/{profile} catch-all shadows custom mirrored routes in v0.22.7.
         # These belong to the listener's own profile; use CLI for multiplexed siblings.
         try:
-            app.router.add_get("/v1/clawy/status", guarded(status))
-            app.router.add_post("/v1/clawy/devices", guarded(add))
-            app.router.add_delete("/v1/clawy/devices/{id}", guarded(remove))
-            app.router.add_post("/v1/clawy/devices/{id}/test", guarded(test))
+            app.router.add_get("/v1/moonstone/status", guarded(status))
+            app.router.add_post("/v1/moonstone/devices", guarded(add))
+            app.router.add_delete("/v1/moonstone/devices/{id}", guarded(remove))
+            app.router.add_post("/v1/moonstone/devices/{id}/test", guarded(test))
         except RuntimeError:  # aiohttp's router is frozen once the server runs.
-            LOG.warning("Clawy plugin enabled while Hermes runs: restart Hermes to add its routes")
+            LOG.warning("Moonstone plugin enabled while Hermes runs: restart Hermes to add its routes")
 
 
 def register(ctx):
@@ -206,8 +206,8 @@ def register(ctx):
     notifications.cron = CronDelivery(home, notifications.route)
     ctx.register_hook("pre_tool_call", notifications.cron.before_tool)
     guide.register(ctx, VERSION)
-    ctx.register_platform("clawy", "Clawy", adapter_factory=lambda config: cron_adapter(notifications.cron, config),
-                          check_fn=lambda: True, cron_deliver_env_var="CLAWY_HOME_CHANNEL",
+    ctx.register_platform("moonstone", "Moonstone", adapter_factory=lambda config: cron_adapter(notifications.cron, config),
+                          check_fn=lambda: True, cron_deliver_env_var="MOONSTONE_HOME_CHANNEL",
                           standalone_sender_fn=notifications.cron.send,
                           standalone_send=StandaloneSendPolicy(media=True),
                           parse_target_ref_fn=lambda target: (target, None), platform_hint=PLATFORM_HINT)
@@ -233,6 +233,6 @@ def register(ctx):
         except (ValueError, TypeError, KeyError, OSError, UnicodeError):
             print("Invalid registration or unavailable device file", file=sys.stderr)
             raise SystemExit(1) from None
-        print("Clawy device registered")
+        print("Moonstone device registered")
 
-    ctx.register_cli_command("clawy-notifications", "Register a Clawy device", setup, command)
+    ctx.register_cli_command("moonstone", "Register a Moonstone device", setup, command)

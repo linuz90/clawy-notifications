@@ -1,6 +1,6 @@
-# Clawy notifications, protocol 2
+# Moonstone notifications, protocol 2
 
-Ordinary notifications are sealed so Clawy's forwarder and Apple cannot read their content. Optional Live Activities use a separate, deliberately public generic lifecycle format. Both plugins implement this contract; sealed notifications remain protocol 2.
+Ordinary notifications are sealed so the forwarder and Apple cannot read their content. Optional Live Activities use a separate, deliberately public generic lifecycle format. Both plugins implement this contract; sealed notifications remain protocol 2.
 
 ## Parties
 
@@ -16,7 +16,7 @@ The app gives the plugin one JSON object per device:
 {
   "v": 2,
   "id": "relay device id",
-  "name": "Clawy on iPhone",
+  "name": "Moonstone on iPhone",
   "forwarder": "https://relay.example/v1/forward/<id>",
   "token": "bearer token for that URL",
   "p256dh": "base64url, 65-byte uncompressed P-256 public key",
@@ -27,7 +27,7 @@ The app gives the plugin one JSON object per device:
 
 `text: false` means this device asked for no message text: the plugin leaves `title` and `body` out of every alert it seals for it, and the alert stays generic unless the device can reach the gateway.
 
-`forwarder` must be exactly `<origin>/v1/forward/<id>`, where the plugin fixes the origin, so whoever can register a device can't aim the gateway at another host. A test sets `CLAWY_FORWARDER_ORIGIN`.
+`forwarder` must be exactly `<origin>/v1/forward/<id>`, where the plugin fixes the origin, so whoever can register a device can't aim the gateway at another host. A test sets `MOONSTONE_FORWARDER_ORIGIN`.
 
 Registering an `id` again replaces that device. A device gets every approval and every question, so on OpenClaw registering or removing one takes `operator.approvals` and `operator.questions`, or `operator.admin`.
 
@@ -51,7 +51,7 @@ The plaintext is UTF-8 JSON:
   "jobId": "for a failed job",
   "truncated": "true when body was shortened",
   "test": "for a test alert, the nonce the device asked with",
-  "chosen": "true on a reply the plugin judged by who's using Clawy where (In use elsewhere)"
+  "chosen": "true on a reply the plugin judged by which device is in use (In use elsewhere)"
 }
 ```
 
@@ -77,7 +77,7 @@ Content-Type: application/json
 
 `kind` is `silent` for a `refresh`, and `alert` for everything else. That one word is all the forwarder learns about what happened.
 
-The forwarder accepts a sealed body of exactly 2867 base64url characters and nothing else, so nothing a sender writes reaches a screen. It allows 60 pushes a minute per device, counted after the token check, so nobody else can spend a device's allowance. It keeps the token only as a hash. It keeps no record of a delivery: nothing in storage or logs, failures included. It sends an alert to Apple as "Clawy / New notification" with `mutable-content`, and a silent push as a background push at priority 5. The sealed body and device id ride beside them, untouched.
+The forwarder accepts a sealed body of exactly 2867 base64url characters and nothing else, so nothing a sender writes reaches a screen. It allows 60 pushes a minute per device, counted after the token check, so nobody else can spend a device's allowance. It keeps the token only as a hash. It keeps no record of a delivery: nothing in storage or logs, failures included. It sends an alert to Apple as "Moonstone / New notification" with `mutable-content`, and a silent push as a background push at priority 5. The sealed body and device id ride beside them, untouched.
 
 | Answer | Meaning | Plugin does |
 | --- | --- | --- |
@@ -90,11 +90,11 @@ The forwarder accepts a sealed body of exactly 2867 base64url characters and not
 | 502 | APNs refused, failed or didn't answer within 4 seconds | Retries once |
 | None | A timeout or a dropped connection | Retries once |
 
-A plugin waits at least 5 seconds for an answer. A retry sends the same sealed body and `seq`, so if the first did reach the device, the second can't open there and shows as a bare "Clawy / New notification": a rare extra alert, traded for one that would otherwise be lost.
+A plugin waits at least 5 seconds for an answer. A retry sends the same sealed body and `seq`, so if the first did reach the device, the second can't open there and shows as a bare "Moonstone / New notification": a rare extra alert, traded for one that would otherwise be lost.
 
 ## Health
 
-A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes dashboard `GET /api/plugins/clawy-notifications/status?profile=<profile>`, legacy API server `GET /v1/clawy/status`) with:
+A plugin answers its status call (OpenClaw `moonstone.notifications.status`, Hermes dashboard `GET /api/plugins/moonstone/status?profile=<profile>`, legacy API server `GET /v1/moonstone/status`) with:
 
 ```json
 {
@@ -103,7 +103,7 @@ A plugin answers its status call (OpenClaw `clawy.notifications.status`, Hermes 
   "liveActivities": 2,
   "listening": { "approvals": true, "questions": true },
   "devices": [
-    { "id": "relay device id", "name": "Clawy on iPhone", "text": true,
+    { "id": "relay device id", "name": "Moonstone on iPhone", "text": true,
       "delivery": { "seq": 1794006306974, "status": 200, "at": 1794006307100 } }
   ]
 }
@@ -116,11 +116,11 @@ The device says when any of this looks wrong, and it never moves to another rout
 
 ## Connector approvals (OpenClaw)
 
-Plugin 0.5.0 advertises `connectorApprovals: 1` in `clawy.notifications.status` when it registered the hook. Clawy reads and writes `plugins.entries.clawy-notifications.config.connectorAsks` through `config.get` and `config.patch`. The object is keyed first by agent ID, then by MCP server ID. A nonempty string is the revision of that pair's Ask Every Time setting. The client writes a new revision when it sets Ask Every Time.
+Plugin 0.5.0 advertises `connectorApprovals: 1` in `moonstone.notifications.status` when it registered the hook. The app reads and writes `plugins.entries.moonstone.config.connectorAsks` through `config.get` and `config.patch`. The object is keyed first by agent ID, then by MCP server ID. A nonempty string is the revision of that pair's Ask Every Time setting. The client writes a new revision when it sets Ask Every Time.
 
-`clawy.connectors.namespaces` (`operator.read`) returns `{ namespaces: { [serverId]: prefix } }`. A missing server ID means the plugin couldn't confirm a stable tool prefix across agent workspaces and possible name collisions. The client offers agent levels only when it has a confirmed prefix for that connector.
+`moonstone.connectors.namespaces` (`operator.read`) returns `{ namespaces: { [serverId]: prefix } }`. A missing server ID means the plugin couldn't confirm a stable tool prefix across agent workspaces and possible name collisions. The client offers agent levels only when it has a confirmed prefix for that connector.
 
-The hook uses OpenClaw's `plugin.approval.requested` event and approval list. The plugin ID is `clawy-notifications`, `toolName` names the MCP tool, and the request has the calling agent and session. The title names the connector. The description's first line is the tool title, followed by at most four short argument lines. The standard sealed approval route carries the same title and description.
+The hook uses OpenClaw's `plugin.approval.requested` event and approval list. The plugin ID is `moonstone`, `toolName` names the MCP tool, and the request has the calling agent and session. The title names the connector. The description's first line is the tool title, followed by at most four short argument lines. The standard sealed approval route carries the same title and description.
 
 Resolve via `plugin.approval.resolve`. An `allow-always` decision also asks the hook to remove the matching rule from the gateway's config. The callback leaves a newer revision intact. Allow Once and Deny keep the rule.
 
@@ -128,7 +128,7 @@ Resolve via `plugin.approval.resolve`. An `allow-always` decision also asks the 
 
 A plugin applies these, where `rest` is the session key after `agent:<agent>:`:
 
-- On OpenClaw, a reply in an app topic (`rest` starts `ios-native-` or `dashboard:`) is an alert. On Hermes, the stored session source must be `clawy` (the hooks expose it as `platform`); legacy `ios-native-` ids also alert. Hermes's `dashboard:` prefix alone no longer means a Clawy chat.
+- On OpenClaw, a reply in an app topic (`rest` starts `ios-native-` or `dashboard:`) is an alert. On Hermes, the stored session source must be `moonstone` (the hooks expose it as `platform`); legacy `ios-native-` ids also alert. Hermes's `dashboard:` prefix alone no longer means a Moonstone chat.
 - A reply in `main`, or where `rest` ends `:heartbeat` or starts `cron:` or `subagent:`, sends nothing.
 - On OpenClaw, an automation's post (a message committed with `openclawAutomation`) counts as a reply in the chat it was posted to, by these same rules, once per message.
 - A reply anywhere else is a `refresh`, so a device following that session can read it in the background.
@@ -144,19 +144,19 @@ A guest's session (`agent:<guest>:<rest>-guest-of-<owner>`, where `rest` starts 
 
 ## In use elsewhere
 
-From plugin version 0.4.7 on OpenClaw, a reply, an automation's post included, is sealed as a `refresh` instead of an alert for a device while Clawy is in use on another of that person's devices, as in a muted chat. Nothing new is asked of the device, and Hermes, whose gateway has no presence list, alerts as before.
+From plugin version 0.4.7 on OpenClaw, a reply, an automation's post included, is sealed as a `refresh` instead of an alert for a device while Moonstone is in use on another of that person's devices, as in a muted chat. Nothing new is asked of the device, and Hermes, whose gateway has no presence list, alerts as before.
 
-Clawy says it's in use with OpenClaw's own `presence.activity` every 30 s: an iPhone or iPad while Clawy is on screen, a Mac while Clawy runs and someone typed, clicked or scrolled since the last time. The gateway stamps that connection's `connectionLastActivityAt` in its presence list. For each reply the plugin reads the list (`system-presence`, on a connection that lasts that one request) and quiets a device when another Clawy entry (`openclaw-ios`, `openclaw-macos`) whose connection is open:
+The app reports activity to OpenClaw with `presence.activity` every 30 s. On iPhone and iPad it reports while on screen. On Mac it reports when running if someone typed, clicked or scrolled since the last report. The gateway stamps that connection's `connectionLastActivityAt` in its presence list. For each reply the plugin reads the list (`system-presence`, on a connection that lasts that one request) and quiets a device when another app entry (`openclaw-ios`, `openclaw-macos`) whose connection is open:
 
 - belongs to another device: its `deviceId` isn't the one this device registered from, which the plugin takes from the registering connection, never from the registration;
 - belongs to the same person, where the gateway tells people apart: its `user.id` is the profile or user this device registered as;
 - and was used more recently than this device: stamped in the last two minutes and more than 30 seconds after this device's own app was, or, for an app too old to stamp, showing a chat (`watchedSessions`).
 
-So of two devices in use the one used most recently alerts. A device's own last stamp counts even after its connection closed, so an iPhone left a moment ago isn't quieted for an older Mac. A message posted with `chat.inject`, which Clawy on the Mac doesn't alert for, is never quieted this way.
+So of two devices in use the one used most recently alerts. A device's own last stamp counts even after its connection closed, so an iPhone left a moment ago isn't quieted for an older Mac. A message posted with `chat.inject`, which Moonstone on the Mac doesn't alert for, is never quieted this way.
 
 A reply quieted this way is held, the latest one per device and chat, and looked at again two and a half minutes later, once the other device's use would have lapsed: two minutes after its last stamp, which comes within 30 seconds of its last input. If the chat is still unread (`sessions.describe`) and this device is now the one used most recently, the reply alerts then, as `chosen`. Read by then, or the other device still in use, and nothing more is sent. A reply in a chat already held replaces it under the first deadline, so replies that keep coming can't put it off. A gateway restart drops what's held.
 
-An approval or a question is never turned into a refresh. While another device is the one in use, it isn't sent to this one at once: that device shows it in the app, and this one gets the alert only if the request is still unanswered a minute later, or after a third of the time it has left (`expiresAtMs`) when that's sooner. `*.approval.resolved` or `question.resolved` cancels it, so a request answered where the person is leaves no alert on their other devices. An answer given while the plugin's observer was offline goes unheard, and the alert goes anyway; the app clears it on its next connect. Nothing goes for a request whose time ran out, and a request the gateway sends again alerts each device once. With no device in use, or a presence list that can't be read, it alerts at once, as before. A failed task never waits for the device in use (Routing has the one wait it can have). A reply the plugin judged and still sent to a device carries `chosen: true`, and the device alerts as sent rather than judging again seconds later on stamps that may have moved. Clawy on the Mac, which takes no pushes, judges by the same stamps and its own last use. Each side judges at its own moment, and the 30-second margin means a stamp landing between them makes both alert, never neither. A device registered before 0.4.7 alerts until its app registers again, which it does on every connect. A presence list that can't be read within two seconds quiets nothing.
+An approval or a question is never turned into a refresh. While another device is the one in use, it isn't sent to this one at once: that device shows it in the app, and this one gets the alert only if the request is still unanswered a minute later, or after a third of the time it has left (`expiresAtMs`) when that's sooner. `*.approval.resolved` or `question.resolved` cancels it, so a request answered where the person is leaves no alert on their other devices. An answer given while the plugin's observer was offline goes unheard, and the alert goes anyway; the app clears it on its next connect. Nothing goes for a request whose time ran out, and a request the gateway sends again alerts each device once. With no device in use, or a presence list that can't be read, it alerts at once, as before. A failed task never waits for the device in use (Routing has the one wait it can have). A reply the plugin judged and still sent to a device carries `chosen: true`, and the device alerts as sent rather than judging again seconds later on stamps that may have moved. Moonstone on the Mac, which takes no pushes, judges by the same stamps and its own last use. Each side judges at its own moment, and the 30-second margin means a stamp landing between them makes both alert, never neither. A device registered before 0.4.7 alerts until its app registers again, which it does on every connect. A presence list that can't be read within two seconds quiets nothing.
 
 ## Live Activities, version 2
 
@@ -198,4 +198,4 @@ A successfully started row handles its followed session's approval/question aler
 
 The relay checks bearer authentication before rate limits, respects mute, ignores tracking ids the device does not follow (202), and ignores old sequences (200). Per tracking id, a newer generation can replace the current one only with start and a newer startedAt, and terminal generations cannot be revived. The relay merges the followed rows into one card per device: the first working row push-starts it, later rows and changes update it, and it ends once no row is working. A finished row stays for two minutes after a reply and one minute otherwise; while other rows still work, the relay wakes when that time is up and pushes the card without it; a row whose run ended before any card showed it never appears. A new run after the card ended, or a card nearing iOS's eight-hour limit, dismisses the old card at once and starts a fresh one carrying the finished rows still within their linger. The latest state is retained until the card's token arrives, for at most nine hours. HTTP 200 means the card now shows this row's state. A per-device SQLite Durable Object serializes management and forwarding across regions; activity routes return 503 without that binding. APNs delivery itself is not exactly-once or guaranteed.
 
-The app manages tokens separately with `PUT /v1/activities/<deviceID>` using its management secret, `trackingIDs` (the whole followed set, at most four) with an increasing `revision`, or `revoke` (at most sixteen ids to drop, for a relay the app no longer uses), an optional pushToStartToken, an optional `{cardID,value}` update token, and `card`: the card id the device shows for this relay device, or null for none. Dropped ids are retired for nine hours; a set older than the last applied revision, or naming a retired id, is ignored. A token for a card the relay no longer holds is ignored. Right after a push-start, and at most once a minute while the card's token is missing, the relay sends the device's ordinary APNs token a background push carrying only `{"aps":{"content-available":1},"clawyActivity":1}`, so a suspended app wakes to hand the token over. A started card the device reports missing for more than two minutes was swiped away or ended by iOS: the relay stops updating it, keeps the runs it showed working off later cards, and starts a fresh card for new work. The object wakes itself to move a card still carrying work to a fresh one before iOS ends it at eight hours. Activity APNs uses RunActivityAttributes with the relay's `cardID`, `startedAt` and `device` (the relay device id, so a device following chats on several gateways tells their cards apart), content state `{rows: [{id, run, phase, needsYou, startedAt, endedAt?}]}` (id is the tracking id, run the run hash), priority 10 and the `.push-type.liveactivity` topic. Start alerts say Clawy / Your agent is still working (Your agents are still working with several rows, Your agent needs you when one waits); an update alerts only when the total waiting count rises, and ends are silent. A card whose last row was dropped dismisses immediately; otherwise an ended card stays until its last row's linger.
+The app manages tokens separately with `PUT /v1/activities/<deviceID>` using its management secret, `trackingIDs` (the whole followed set, at most four) with an increasing `revision`, or `revoke` (at most sixteen ids to drop, for a relay the app no longer uses), an optional pushToStartToken, an optional `{cardID,value}` update token, and `card`: the card id the device shows for this relay device, or null for none. Dropped ids are retired for nine hours; a set older than the last applied revision, or naming a retired id, is ignored. A token for a card the relay no longer holds is ignored. Right after a push-start, and at most once a minute while the card's token is missing, the relay sends the device's ordinary APNs token a background push carrying only `{"aps":{"content-available":1},"moonstoneActivity":1}`, so a suspended app wakes to hand the token over. A started card the device reports missing for more than two minutes was swiped away or ended by iOS: the relay stops updating it, keeps the runs it showed working off later cards, and starts a fresh card for new work. The object wakes itself to move a card still carrying work to a fresh one before iOS ends it at eight hours. Activity APNs uses RunActivityAttributes with the relay's `cardID`, `startedAt` and `device` (the relay device id, so a device following chats on several gateways tells their cards apart), content state `{rows: [{id, run, phase, needsYou, startedAt, endedAt?}]}` (id is the tracking id, run the run hash), priority 10 and the `.push-type.liveactivity` topic. Start alerts say Moonstone / Your agent is still working (Your agents are still working with several rows, Your agent needs you when one waits); an update alerts only when the total waiting count rises, and ends are silent. A card whose last row was dropped dismisses immediately; otherwise an ended card stays until its last row's linger.

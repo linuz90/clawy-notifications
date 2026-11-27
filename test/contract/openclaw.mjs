@@ -4,8 +4,8 @@
 //
 //   node test/contract/openclaw.mjs [version]        (default: latest)
 //
-// It installs this checkout's committed state, or CLAWY_INSTALL_SOURCE, such as the published
-// `git:linuz90/clawy-notifications#v0.2.0`.
+// It installs this checkout's committed state, or MOONSTONE_INSTALL_SOURCE, such as the published
+// `git:linuz90/moonstone-plugin#v0.2.0`.
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -17,7 +17,7 @@ import { startForwarder } from "./forwarder.mjs";
 
 const version = process.argv[2] ?? "latest";
 const repo = resolve(import.meta.dirname, "../..");
-const root = mkdtempSync(join(tmpdir(), "clawy-contract-"));
+const root = mkdtempSync(join(tmpdir(), "moonstone-contract-"));
 const port = 20000 + Math.floor(Math.random() * 20000);
 const password = randomBytes(18).toString("base64url");
 const forwarder = await startForwarder();
@@ -29,7 +29,7 @@ const env = {
   OPENCLAW_CONFIG_PATH: join(root, "state/openclaw.json"),
   OPENCLAW_PROFILE: "contract",
   OPENCLAW_GATEWAY_PASSWORD: password,
-  CLAWY_FORWARDER_ORIGIN: forwarder.origin,
+  MOONSTONE_FORWARDER_ORIGIN: forwarder.origin,
 };
 const binary = join(root, "runtime/node_modules/.bin/openclaw");
 const openclaw = (...args) => execFileSync(binary, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -70,23 +70,23 @@ try {
     await new Promise((done) => setTimeout(done, 1000));
   }
 
-  openclaw("plugins", "install", process.env.CLAWY_INSTALL_SOURCE ?? `git:file://${repo}`, "--force", "--accept-capabilities");
-  openclaw("plugins", "enable", "clawy-notifications");
+  openclaw("plugins", "install", process.env.MOONSTONE_INSTALL_SOURCE ?? `git:file://${repo}`, "--force", "--accept-capabilities");
+  openclaw("plugins", "enable", "moonstone");
 
   let status;
   for (let i = 0; ; i++) {
-    status = await call("clawy.notifications.status").catch(() => null);
+    status = await call("moonstone.notifications.status").catch(() => null);
     if (status?.listening?.approvals && status.listening.questions) break;
     assert.ok(i < 60, `the plugin never signed in: ${JSON.stringify(status)}`);
     await new Promise((done) => setTimeout(done, 1000));
   }
   assert.equal(status.protocol, 2);
   assert.equal(status.liveActivities, 2);
-  console.log(`plugin ${status.version} installed from ${process.env.CLAWY_INSTALL_SOURCE ?? "this checkout"}, approvals and questions signed in with a password`);
+  console.log(`plugin ${status.version} installed from ${process.env.MOONSTONE_INSTALL_SOURCE ?? "this checkout"}, approvals and questions signed in with a password`);
 
-  await call("clawy.notifications.register", forwarder.device);
-  assert.equal((await call("clawy.notifications.test", { id: forwarder.device.id, test: "nonce-1" })).status, 200);
-  const test = await forwarder.waitFor((m) => m.title === "Clawy notifications", "test alert");
+  await call("moonstone.notifications.register", forwarder.device);
+  assert.equal((await call("moonstone.notifications.test", { id: forwarder.device.id, test: "nonce-1" })).status, 200);
+  const test = await forwarder.waitFor((m) => m.title === "Moonstone notifications", "test alert");
   assert.equal(test.kind, "reply");
   assert.equal(test.test, "nonce-1");
   assert.ok(Number.isSafeInteger(test.seq));
@@ -108,7 +108,7 @@ try {
   assert.equal(injected.body, "Your build finished.");
   console.log("chat.inject message sealed from the transcript listener");
 
-  const delivery = (await call("clawy.notifications.status")).devices.find((d) => d.id === forwarder.device.id)?.delivery;
+  const delivery = (await call("moonstone.notifications.status")).devices.find((d) => d.id === forwarder.device.id)?.delivery;
   assert.equal(delivery?.status, 200);
   assert.equal(delivery?.seq, injected.seq);
   console.log("status reports the last delivery");

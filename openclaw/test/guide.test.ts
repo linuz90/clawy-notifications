@@ -10,17 +10,17 @@ function harness(list: () => Promise<any>) {
   return { names, tool: () => factory({ sessionKey: "agent:juno:ios-native-chat" })[0] };
 }
 
-test("the guide tool returns the guide, then which Clawy devices share right now", async () => {
+test("the guide tool returns the guide, then which Moonstone devices share right now", async () => {
   const h = harness(async () => ({ nodes: [
-    { nodeId: "mac-1", clientId: "openclaw-macos", clientMode: "node", deviceFamily: "Mac", connected: true, commands: ["clawy.places.show"] },
+    { nodeId: "mac-1", clientId: "openclaw-macos", clientMode: "node", deviceFamily: "Mac", connected: true, commands: ["moonstone.places.show"] },
     { nodeId: "openclaw-app", clientId: "openclaw-ios", clientMode: "node", deviceFamily: "iPhone", connected: true, commands: ["canvas.present"] },
     { nodeId: "other", clientId: "some-other-node", deviceFamily: "Linux", connected: true },
   ] }));
   assert.deepEqual(h.names, [guideToolName]);
   const text = (await h.tool().execute("call-1", {})).content[0].text;
   assert.ok(text.startsWith(readFileSync(new URL("../../guide.md", import.meta.url), "utf8").trimEnd()));
-  assert.match(text, /Clawy Plugin 9\.9\.9/);
-  // Only Clawy's own node: OpenClaw's app shares its client id, and other nodes aren't devices.
+  assert.match(text, /Moonstone Plugin 9\.9\.9/);
+  // Only Moonstone's own node: OpenClaw's app shares its client id, and other nodes aren't devices.
   assert.match(text, /Sharing with agents right now: Mac\.\n/);
 });
 

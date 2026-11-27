@@ -7,15 +7,15 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { registerToolStatus } from "../tool-status.ts";
 
 test("tool status is owner-only and reads accounts from an explicit file keyring without prompting", async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), "clawy-gog-"));
+  const directory = mkdtempSync(join(tmpdir(), "moonstone-gog-"));
   const path = process.env.PATH;
-  const backend = process.env.CLAWY_TEST_KEYRING;
+  const backend = process.env.MOONSTONE_TEST_KEYRING;
   process.env.PATH = directory;
   t.after(() => {
     if (path === undefined) delete process.env.PATH;
     else process.env.PATH = path;
-    if (backend === undefined) delete process.env.CLAWY_TEST_KEYRING;
-    else process.env.CLAWY_TEST_KEYRING = backend;
+    if (backend === undefined) delete process.env.MOONSTONE_TEST_KEYRING;
+    else process.env.MOONSTONE_TEST_KEYRING = backend;
     rmSync(directory, { recursive: true, force: true });
   });
 
@@ -23,7 +23,7 @@ test("tool status is owner-only and reads accounts from an explicit file keyring
   let handler: Parameters<Register>[1];
   registerToolStatus({
     registerGatewayMethod(name, registered, options) {
-      assert.equal(name, "clawy.tools.status");
+      assert.equal(name, "moonstone.tools.status");
       assert.deepEqual(options, { scope: "operator.admin" });
       handler = registered;
     },
@@ -45,9 +45,9 @@ test("tool status is owner-only and reads accounts from an explicit file keyring
   writeFileSync(executable, `#!${process.execPath}
 const [auth, subcommand, ...flags] = process.argv.slice(2);
 if (auth !== "auth" || flags.join(" ") !== "--json --no-input --color=never") process.exit(1);
-if (subcommand === "keyring") console.log(JSON.stringify({ keyring_backend: process.env.CLAWY_TEST_KEYRING }));
+if (subcommand === "keyring") console.log(JSON.stringify({ keyring_backend: process.env.MOONSTONE_TEST_KEYRING }));
 else if (subcommand === "list" && process.env.GOG_KEYRING_BACKEND === "file") {
-  if (process.env.CLAWY_TEST_KEYRING !== "file") process.exit(1);
+  if (process.env.MOONSTONE_TEST_KEYRING !== "file") process.exit(1);
   console.log(JSON.stringify({ accounts: [
     { email: "juno@example.com", token: "never returned", services: ["gmail", "calendar"],
       scopes: ["email", "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/calendar"] },
@@ -59,9 +59,9 @@ else if (subcommand === "list" && process.env.GOG_KEYRING_BACKEND === "file") {
 } else process.exit(1);
 `, { mode: 0o755 });
   assert.deepEqual(await read(["operator.read"]), [false, undefined, { code: "FORBIDDEN", message: "needs operator.admin" }]);
-  process.env.CLAWY_TEST_KEYRING = "auto";
+  process.env.MOONSTONE_TEST_KEYRING = "auto";
   assert.deepEqual(await read(owner), [true, { gog: { installed: true } }]);
-  process.env.CLAWY_TEST_KEYRING = "file";
+  process.env.MOONSTONE_TEST_KEYRING = "file";
   // Access only where gog read the sign-in, and nothing of a token, an error or a malformed service.
   assert.deepEqual(await read(owner), [true, { gog: {
     installed: true,
@@ -74,7 +74,7 @@ else if (subcommand === "list" && process.env.GOG_KEYRING_BACKEND === "file") {
 });
 
 test("tool status bounds a stalled CLI and never returns error output", async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), "clawy-gog-timeout-"));
+  const directory = mkdtempSync(join(tmpdir(), "moonstone-gog-timeout-"));
   const path = process.env.PATH;
   process.env.PATH = directory;
   t.after(() => {

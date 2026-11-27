@@ -1,7 +1,7 @@
 {
-  "name": "clawy-notifications",
-  "label": "Clawy notifications",
-  "version": "0.5.0",
+  "name": "moonstone",
+  "label": "Moonstone",
+  "version": "0.6.0",
   "tab": { "hidden": true },
   "api": "plugin_api.py"
 }

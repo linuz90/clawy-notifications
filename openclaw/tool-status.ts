@@ -93,7 +93,7 @@ async function googleStatus(): Promise<GoogleStatus> {
 
 export function registerToolStatus(api: Pick<OpenClawPluginApi, "registerGatewayMethod">): void {
   let pending: Promise<GoogleStatus> | undefined;
-  api.registerGatewayMethod("clawy.tools.status", async ({ client, respond }) => {
+  api.registerGatewayMethod("moonstone.tools.status", async ({ client, respond }) => {
     if (!client?.connect?.scopes?.includes("operator.admin")) {
       return respond(false, undefined, { code: "FORBIDDEN", message: "needs operator.admin" });
     }

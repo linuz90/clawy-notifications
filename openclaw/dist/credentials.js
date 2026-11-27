@@ -1,5 +1,5 @@
 // Reads SecretRef locations, the 1Password plugin's rules, and 1Password vault and item metadata for
-// Clawy's Credentials page: what `config.get` hides from a client (it redacts SecretRef ids, and the
+// Moonstone's Credentials page: what `config.get` hides from a client (it redacts SecretRef ids, and the
 // whole `onepassword` entry, whose name matches its /password/ rule) and what no gateway method lists.
 // It never resolves a SecretRef or reads an item value. See README.md, What could break between OpenClaw releases.
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
@@ -276,7 +276,7 @@ export function registerCredentials(api                                         
       .then(sdk => sdk.pluginSecretRefSetup?.resolveTrustedExecutablePath, () => undefined);
     pending = trustedReader.then(trusted => readOnePassword(api.runtime, config, trusted)).then(result => {
       if (result.status !== "ready" && result.status !== "no-token" && result.status !== "no-op") {
-        api.logger.warn(`clawy.credentials.status: ${result.status}`);
+        api.logger.warn(`moonstone.credentials.status: ${result.status}`);
       }
       cached = { ...result, checkedAt: Date.now() };
       return cached;
@@ -284,7 +284,7 @@ export function registerCredentials(api                                         
     return pending;
   }
 
-  api.registerGatewayMethod("clawy.credentials.status", async ({ params, respond }) => {
+  api.registerGatewayMethod("moonstone.credentials.status", async ({ params, respond }) => {
     try {
       // The runtime config can replace a SecretRef with its resolved value. The source snapshot
       // retains the reference and its id. Older SDKs can still report refs present in current().

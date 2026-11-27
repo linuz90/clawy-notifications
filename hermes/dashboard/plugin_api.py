@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
-LOG = logging.getLogger("clawy.notifications")
+LOG = logging.getLogger("moonstone.notifications")
 
 
 def observer():
@@ -19,10 +19,10 @@ def observer():
     discover_plugins()
     # Hermes has no public accessor for an agent plugin's instance. This private lookup is
     # checked against the pinned Hermes; never create a second worker with separate health.
-    loaded = get_plugin_manager()._plugins.get("clawy-notifications")
+    loaded = get_plugin_manager()._plugins.get("moonstone")
     service = getattr(getattr(loaded, "module", None), "_notifications", None)
     if not getattr(loaded, "enabled", False) or service is None or not service.active:
-        raise HTTPException(503, "Restart Hermes to load the Clawy notification observers")
+        raise HTTPException(503, "Restart Hermes to load the Moonstone notification observers")
     return service
 
 
@@ -82,13 +82,13 @@ async def test(device_id: str, request: Request):
     found = next((d for d in await asyncio.to_thread(service.devices.all) if d["id"] == device_id), None)
     if found is None:
         raise HTTPException(404, "Unknown device")
-    alert = {"v": 2, "kind": "reply", "title": "Clawy notifications",
+    alert = {"v": 2, "kind": "reply", "title": "Moonstone notifications",
              "body": "Sealed on your Hermes, opened on this device."}
     if isinstance(value.get("test"), str):
         alert["test"] = value["test"][:64]
     try:
         code = await asyncio.to_thread(service.delivery.send, found, alert)
     except Exception:
-        LOG.warning("Clawy push failed")  # Exception text can contain secrets.
+        LOG.warning("Moonstone push failed")  # Exception text can contain secrets.
         code = 0
     return {"status": code}

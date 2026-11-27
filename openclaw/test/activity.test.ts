@@ -35,7 +35,7 @@ test("strict activity registration survives persistence and does not change prot
   assert.equal(parseActivities(follow), false);
   assert.deepEqual(parseActivities([follow, other]), [follow, other]);
   assert.equal(parseDevice({ ...d, activities: [follow, { ...other, mode: "sometimes" }] }), null);
-  const folder = mkdtempSync(join(tmpdir(), "clawy-activity-"));
+  const folder = mkdtempSync(join(tmpdir(), "moonstone-activity-"));
   try { const file = new DeviceFile(join(folder, "devices")); file.add(parseDevice(d)!); assert.deepEqual(file.list()[0].activities, d.activities); } finally { rmSync(folder, { recursive: true }); }
 });
 
@@ -167,14 +167,14 @@ test("activity forwarding uses fixed route, retries one sequence and never remov
 });
 
 test("actual plugin registration and lifecycle hooks handle silent, abort, error and yielded parent", async () => {
-  const folder = mkdtempSync(join(tmpdir(), "clawy-plugin-hooks-")), methods = new Map(), hooks = new Map(), observers: any[] = [], posts: any[] = [];
+  const folder = mkdtempSync(join(tmpdir(), "moonstone-plugin-hooks-")), methods = new Map(), hooks = new Map(), observers: any[] = [], posts: any[] = [];
   let event: any, transcript: any, service: any;
   const original = globalThis.fetch, realDateNow = Date.now;
   const mock: any = { clients: observers, definePluginEntry: (p: any) => p };
-  (globalThis as any).__clawyActivityTest = mock;
+  (globalThis as any).__moonstoneActivityTest = mock;
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8")
-    .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__clawyActivityTest;')
-    .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__clawyActivityTest;')
+    .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__moonstoneActivityTest;')
+    .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__moonstoneActivityTest;')
     .replace(/from "\.\/([\w-]+)\.ts"/gu, (_, name) => `from "${new URL(`../${name}.ts`, import.meta.url)}"`);
   mock.createOperatorApprovalsGatewayClient = async (options: any) => { observers.push(options); return { start() {}, stop() {} }; };
   mock.GatewayClient = class { constructor(options: any) { observers.push(options); } start() {} stop() {} };
@@ -185,7 +185,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     const plugin = (await import(pathToFileURL(join(folder, "plugin.mjs")).href)).default;
     plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on: (name: string, fn: any) => hooks.set(name, fn), registerService: (value: any) => service = value });
     let result: any;
-    const call = (method: string, params = {}) => methods.get(`clawy.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
+    const call = (method: string, params = {}) => methods.get(`moonstone.notifications.${method}`)({ params, client: { connect: { scopes: ["operator.admin"] } }, respond: (ok: boolean, value: any) => { assert.ok(ok); result = value; } });
     call("status"); assert.equal(result.liveActivities, 2); assert.equal(result.protocol, 2); assert.equal(result.version, JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version); assert.equal(result.mutes, 1);
     const d = device(); call("register", d); await service.start({ config: {} });
     // A forward with no answer goes once more, the same sealed body, and the device's health is that answer.
@@ -255,7 +255,7 @@ test("actual plugin registration and lifecycle hooks handle silent, abort, error
     assert.equal(posts.at(-1).body.event, "start"); assert.equal(posts.at(-1).body.phase, "needsYou");
     observers[0].onEvent({ event: "exec.approval.resolved", payload: { id: "before-registration" } }); await new Promise(setImmediate); assert.equal(posts.at(-1).body.phase, "working");
     service.stop();
-  } finally { globalThis.fetch = original; Date.now = realDateNow; delete (globalThis as any).__clawyActivityTest; rmSync(folder, { recursive: true }); }
+  } finally { globalThis.fetch = original; Date.now = realDateNow; delete (globalThis as any).__moonstoneActivityTest; rmSync(folder, { recursive: true }); }
 });
 
 test("one device follows several chats, each its own row that starts and ends on its own", async () => {
@@ -380,12 +380,12 @@ test("a chat followed afresh while only its helpers work gets a working row once
   g.activities.close(); assert.equal(g.scheduled.size, 0);
 });
 
-test("a reply reaches a device silently while the person uses Clawy on another, read from presence for that reply", async () => {
-  const folder = mkdtempSync(join(tmpdir(), "clawy-plugin-presence-")), methods = new Map(), forwards: any[] = [], reads: string[] = [];
+test("a reply reaches a device silently while the person uses Moonstone on another, read from presence for that reply", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "moonstone-plugin-presence-")), methods = new Map(), forwards: any[] = [], reads: string[] = [];
   let event: any, transcript: any, service: any, presence: any[] = [];
   const original = globalThis.fetch;
   const mock: any = { definePluginEntry: (p: any) => p, resolveGatewayAuth: () => ({}) };
-  (globalThis as any).__clawyActivityTest = mock;
+  (globalThis as any).__moonstoneActivityTest = mock;
   let approvals: any, questions: any, stalls = false, stops = 0, unread = true;
   const described: string[] = [];
   mock.createOperatorApprovalsGatewayClient = async (options: any) => { approvals = options; return { start() {}, stop() {} }; };
@@ -402,8 +402,8 @@ test("a reply reaches a device silently while the person uses Clawy on another, 
     }
   };
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8")
-    .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__clawyActivityTest;')
-    .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__clawyActivityTest;')
+    .replace(/import .* from "openclaw\/plugin-sdk\/gateway-runtime";/u, 'const { createOperatorApprovalsGatewayClient, GatewayClient, resolveGatewayAuth } = globalThis.__moonstoneActivityTest;')
+    .replace(/import .* from "openclaw\/plugin-sdk\/plugin-entry";/u, 'const { definePluginEntry } = globalThis.__moonstoneActivityTest;')
     .replace(/from "\.\/([\w-]+)\.ts"/gu, (_, name) => `from "${new URL(`../${name}.ts`, import.meta.url)}"`);
   writeFileSync(join(folder, "plugin.mjs"), stripTypeScriptTypes(source));
   globalThis.fetch = (async (_url, options) => { forwards.push(JSON.parse(options!.body as string)); return new Response(null, { status: 200 }); }) as any;
@@ -412,8 +412,8 @@ test("a reply reaches a device silently while the person uses Clawy on another, 
     plugin.register({ registerTool() {}, logger: { warn() {} }, runtime: { state: { resolveStateDir: () => folder }, events: { onAgentEvent: (fn: any) => { event = fn; return () => {}; }, onSessionTranscriptUpdate: (fn: any) => { transcript = fn; return () => {}; } } }, registerGatewayMethod: (name: string, fn: any) => methods.set(name, fn), on() {}, registerService: (value: any) => service = value });
     // The iPhone registers over its own connection; a gatewayDevice it sends itself counts for nothing.
     const iphone = { connect: { scopes: ["operator.admin"], device: { id: "iphone-gw" } }, authenticatedUserProfile: { profileId: "gateway-owner" } };
-    methods.get("clawy.notifications.register")({ params: { ...device(), activities: undefined, gatewayDevice: "spoofed" }, client: iphone, respond: (ok: boolean) => assert.ok(ok) });
-    assert.deepEqual(JSON.parse(readFileSync(join(folder, "clawy-notifications/devices.json"), "utf8")).map((d: Device) => [d.gatewayDevice, d.person]), [["iphone-gw", "gateway-owner"]]);
+    methods.get("moonstone.notifications.register")({ params: { ...device(), activities: undefined, gatewayDevice: "spoofed" }, client: iphone, respond: (ok: boolean) => assert.ok(ok) });
+    assert.deepEqual(JSON.parse(readFileSync(join(folder, "moonstone/devices.json"), "utf8")).map((d: Device) => [d.gatewayDevice, d.person]), [["iphone-gw", "gateway-owner"]]);
     await service.start({ config: {} });
     const reply = async (runId: string, sessionKey = "agent:a:ios-native-one") => {
       event({ sessionKey, runId, stream: "lifecycle", data: { phase: "end", terminalReply: { disposition: "visible", text: "Done" } } });
@@ -426,7 +426,7 @@ test("a reply reaches a device silently while the person uses Clawy on another, 
     presence = [];
     assert.equal(await reply("two"), "alert");
     assert.deepEqual(reads, ["system-presence", "system-presence"]);
-    // A message posted with chat.inject, which Clawy on the Mac doesn't alert for: never quieted, nor read for.
+    // A message posted with chat.inject, which Moonstone on the Mac doesn't alert for: never quieted, nor read for.
     presence = [{ clientId: "openclaw-macos", deviceId: "mac-gw", user: { id: "gateway-owner" }, connectionLastActivityAt: Date.now() - 5_000 }];
     transcript({ target: { sessionKey: "agent:a:ios-native-one", agentId: "a" }, messageId: "m1", message: { role: "assistant", provider: "openclaw", model: "gateway-injected", content: "Build done" } });
     for (let i = 0; i < 5; i++) await new Promise(setImmediate);
@@ -531,5 +531,5 @@ test("a reply reaches a device silently while the person uses Clawy on another, 
       assert.equal(forwards.length, asked + 4);
     } finally { nodeMock.timers.reset(); }
   } finally {
-    service?.stop(); globalThis.fetch = original; delete (globalThis as any).__clawyActivityTest; rmSync(folder, { recursive: true }); }
+    service?.stop(); globalThis.fetch = original; delete (globalThis as any).__moonstoneActivityTest; rmSync(folder, { recursive: true }); }
 });

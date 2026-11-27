@@ -47,8 +47,8 @@ const base64url = /^[A-Za-z0-9_-]+$/u;
 
 /** The one host this plugin ever posts to. A client that can register a device can't point it
  * anywhere else, so it can't make your gateway send a request of its choosing. Set
- * CLAWY_FORWARDER_ORIGIN only to test against a forwarder of your own. */
-export const forwarderOrigin = () => process.env.CLAWY_FORWARDER_ORIGIN ?? "https://openclaw-client-relay.linuz90.workers.dev";
+ * MOONSTONE_FORWARDER_ORIGIN only to test against a forwarder of your own. */
+export const forwarderOrigin = () => process.env.MOONSTONE_FORWARDER_ORIGIN ?? "https://openclaw-client-relay.linuz90.workers.dev";
 
 /** A device gets every approval and every question, so adding one takes the right to see them. */
 export const canRegister = (scopes           = []) =>

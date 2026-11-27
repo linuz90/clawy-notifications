@@ -20,7 +20,7 @@ function setEnv(t: TestContext, name: string, value: string | undefined) {
 }
 
 function harness(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "clawy-credentials-"));
+  const root = mkdtempSync(join(tmpdir(), "moonstone-credentials-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const executable = join(root, process.platform === "win32" ? "op.exe" : "op");
   writeFileSync(executable, "", { mode: 0o700 });
@@ -77,7 +77,7 @@ function harness(t: TestContext) {
 
 test("registers only an admin-scoped status method", t => {
   const { method } = harness(t);
-  assert.equal(method.name, "clawy.credentials.status");
+  assert.equal(method.name, "moonstone.credentials.status");
   assert.deepEqual(method.options, { scope: "operator.admin" });
 });
 
@@ -122,7 +122,7 @@ test("reports SecretRef paths and only store and environment IDs", async t => {
 test("reports the 1Password plugin's rules, which config.get hides whole", async t => {
   const h = harness(t);
   h.config = { plugins: { entries: { onepassword: { config: {
-    vault: "Clawy Test", defaultPolicy: "deny", opBin: "/secret/path",
+    vault: "Test Vault", defaultPolicy: "deny", opBin: "/secret/path",
     items: {
       "acme-shop": { item: " Acme Shop ", field: "password", policy: "approve", description: "Sign in to the shop" },
       "team-visa": { item: "Team Visa", vault: "Cards", field: "number" },
@@ -130,9 +130,9 @@ test("reports the 1Password plugin's rules, which config.get hides whole", async
     },
   } } } } };
   assert.deepEqual((await h.status()).onepasswordRules, {
-    enabled: true, vault: "Clawy Test",
+    enabled: true, vault: "Test Vault",
     rules: [
-      { slug: "acme-shop", item: "Acme Shop", vault: "Clawy Test", field: "password", policy: "approve", description: "Sign in to the shop" },
+      { slug: "acme-shop", item: "Acme Shop", vault: "Test Vault", field: "password", policy: "approve", description: "Sign in to the shop" },
       { slug: "team-visa", item: "Team Visa", vault: "Cards", field: "number", policy: "deny" },
     ],
   });
@@ -143,12 +143,12 @@ test("reports the 1Password plugin's rules, which config.get hides whole", async
   assert.deepEqual((await h.status()).onepasswordRules, { enabled: false, blocked: true, rules: [] });
   h.config = { plugins: { deny: ["OnePassword"], entries: { onepassword: { enabled: true } } } };
   assert.equal((await h.status()).onepasswordRules.blocked, true);
-  h.config = { plugins: { allow: ["clawy-notifications"], entries: { onepassword: { enabled: true } } } };
+  h.config = { plugins: { allow: ["moonstone"], entries: { onepassword: { enabled: true } } } };
   assert.equal((await h.status()).onepasswordRules.blocked, true);
   h.config = {};
   assert.equal((await h.status()).onepasswordRules, null);
   // No entry yet, but an allowlist leaves it out: a first rule couldn't turn it on.
-  h.config = { plugins: { allow: ["clawy-notifications"] } };
+  h.config = { plugins: { allow: ["moonstone"] } };
   assert.deepEqual((await h.status()).onepasswordRules, { enabled: false, blocked: true, rules: [] });
 });
 
@@ -206,7 +206,7 @@ test("says what's wrong with op while no token is connected", async t => {
 
 test("lists only vault and item metadata using a fresh child environment", async t => {
   const h = harness(t);
-  setEnv(t, "CLAWY_TEST_GATEWAY_SECRET", "gateway-secret-sentinel");
+  setEnv(t, "MOONSTONE_TEST_GATEWAY_SECRET", "gateway-secret-sentinel");
   setEnv(t, "OP_SERVICE_ACCOUNT_TOKEN", "unrelated-gateway-token");
   h.writeToken();
   h.run = async argv => success(argv[1] === "vault" ? [{ ...vault, secret: "vault-value" }, null] : [
@@ -300,7 +300,7 @@ test("classifies command failures and malformed output without leaking diagnosti
     assert.equal(h.calls.length, before + 2, "both lists run together");
     assert.equal(JSON.stringify(result).includes(sensitive), false);
   }
-  assert.deepEqual(h.warnings, cases.map(({ status }) => `clawy.credentials.status: ${status}`));
+  assert.deepEqual(h.warnings, cases.map(({ status }) => `moonstone.credentials.status: ${status}`));
 });
 
 test("caches onePassword for 60 seconds, shares pending work, and always reads refs", async t => {

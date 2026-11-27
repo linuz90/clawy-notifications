@@ -4,8 +4,8 @@
 //
 //   node test/contract/hermes.mjs [tag]        (default: the newest release)
 //
-// Needs git and uv. It installs this checkout's committed state, or CLAWY_INSTALL_SOURCE, such as
-// the published `linuz90/clawy-notifications#hermes`.
+// Needs git and uv. It installs this checkout's committed state, or MOONSTONE_INSTALL_SOURCE, such as
+// the published `linuz90/moonstone-plugin#hermes`.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -16,13 +16,13 @@ import { startForwarder } from "./forwarder.mjs";
 
 const repo = resolve(import.meta.dirname, "../..");
 const tag = process.argv[2] ?? (await (await fetch("https://api.github.com/repos/NousResearch/hermes-agent/releases/latest")).json()).tag_name;
-const root = mkdtempSync(join(tmpdir(), "clawy-contract-"));
+const root = mkdtempSync(join(tmpdir(), "moonstone-contract-"));
 const source = join(root, "hermes-agent");
 const home = join(root, "home");
 const port = 20000 + Math.floor(Math.random() * 20000);
 const key = randomBytes(24).toString("hex");
 const forwarder = await startForwarder();
-const env = { PATH: process.env.PATH, HOME: root, HERMES_HOME: home, CLAWY_FORWARDER_ORIGIN: forwarder.origin };
+const env = { PATH: process.env.PATH, HOME: root, HERMES_HOME: home, MOONSTONE_FORWARDER_ORIGIN: forwarder.origin };
 const hermes = join(source, ".venv/bin/hermes");
 const api = (method, path, body, token = key) => fetch(`http://127.0.0.1:${port}${path}`, {
   method,
@@ -46,13 +46,13 @@ assert {"pre_llm_call", "post_llm_call", "on_session_end", "on_human_input_reque
 `], { cwd: source, env, stdio: "inherit" });
 
   execFileSync(join(source, ".venv/bin/python"), [join(repo, "hermes/test/test_cron.py")], {
-    env: { ...env, CLAWY_HERMES_SOURCE: source }, stdio: "inherit",
+    env: { ...env, MOONSTONE_HERMES_SOURCE: source }, stdio: "inherit",
   });
   console.log("cron routing, durable completion and push contracts passed");
 
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, ".env"), `API_SERVER_ENABLED=true\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=${port}\nAPI_SERVER_KEY=${key}\n`, { mode: 0o600 });
-  execFileSync(hermes, ["plugins", "install", process.env.CLAWY_INSTALL_SOURCE ?? `file://${repo}#hermes`, "--enable"], { env, stdio: "ignore" });
+  execFileSync(hermes, ["plugins", "install", process.env.MOONSTONE_INSTALL_SOURCE ?? `file://${repo}#hermes`, "--enable"], { env, stdio: "ignore" });
   // Enabling a plugin moves a source install onto Hermes's managed environment, which starts with
   // no extras, so the API server's have to be chosen there.
   execFileSync(join(source, ".venv/bin/python"), ["-c", 'from pm.client import sync_venv; sync_venv(["messaging", "web"], explicit=True)'], { cwd: source, env, stdio: "ignore" });
@@ -65,21 +65,21 @@ assert {"pre_llm_call", "post_llm_call", "on_session_end", "on_human_input_reque
     await new Promise((done) => setTimeout(done, 1000));
   }
 
-  assert.equal((await api("GET", "/v1/clawy/status", undefined, "wrong-key")).status, 401);
-  const status = await (await api("GET", "/v1/clawy/status")).json();
+  assert.equal((await api("GET", "/v1/moonstone/status", undefined, "wrong-key")).status, 401);
+  const status = await (await api("GET", "/v1/moonstone/status")).json();
   assert.equal(status.protocol, 2);
   assert.equal(status.liveActivities, 2);
-  console.log(`plugin ${status.version} installed from ${process.env.CLAWY_INSTALL_SOURCE ?? "this checkout"}, its routes refuse a wrong key`);
+  console.log(`plugin ${status.version} installed from ${process.env.MOONSTONE_INSTALL_SOURCE ?? "this checkout"}, its routes refuse a wrong key`);
 
-  assert.equal((await api("POST", "/v1/clawy/devices", forwarder.device)).status, 200);
-  const answer = await (await api("POST", `/v1/clawy/devices/${forwarder.device.id}/test`, { test: "nonce-1" })).json();
+  assert.equal((await api("POST", "/v1/moonstone/devices", forwarder.device)).status, 200);
+  const answer = await (await api("POST", `/v1/moonstone/devices/${forwarder.device.id}/test`, { test: "nonce-1" })).json();
   assert.equal(answer.status, 200);
-  const test = await forwarder.waitFor((m) => m.title === "Clawy notifications", "test alert");
+  const test = await forwarder.waitFor((m) => m.title === "Moonstone notifications", "test alert");
   assert.ok(Number.isSafeInteger(test.seq));
   assert.equal(test.test, "nonce-1");
   console.log("test alert sealed, posted and opened");
 
-  const after = await (await api("GET", "/v1/clawy/status")).json();
+  const after = await (await api("GET", "/v1/moonstone/status")).json();
   assert.equal(after.devices.find((d) => d.id === forwarder.device.id)?.delivery?.seq, test.seq);
   console.log("status reports the last delivery");
   console.log("OK");

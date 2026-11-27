@@ -140,6 +140,9 @@ test("approvals and questions alert from any session, answered ones send nothing
 
 test("only a failed job alerts", () => {
   assert.equal(failedJobMessage({ action: "finished", status: "error", jobId: "j1", job: { name: "Backup" }, error: "disk full" })?.title, "Backup failed");
+  // From the agent that runs it: the hook's top-level field, or the job's own.
+  assert.equal(failedJobMessage({ action: "finished", status: "error", jobId: "j1", agentId: "juno", job: { name: "Backup" } })?.agentId, "juno");
+  assert.equal(failedJobMessage({ action: "finished", status: "error", jobId: "j1", job: { name: "Backup", agentId: "atlas" } })?.agentId, "atlas");
   assert.equal(failedJobMessage({ action: "finished", status: "ok", jobId: "j1" }), null);
   assert.equal(failedJobMessage({ action: "started", jobId: "j1" }), null);
 });
@@ -174,7 +177,7 @@ test("a reply in a chat the device muted goes out silent; what waits on the pers
   assert.equal(forDevice({ ...reply, test: "n" }, muted, 1_000).kind, "reply");
 });
 
-test("a reply goes out silent while Clawy was used more recently on another of the person's devices", () => {
+test("a reply goes out silent while Moonstone was used more recently on another of the person's devices", () => {
   const reply = { v: 2 as const, kind: "reply" as const, body: "Done", sessionKey: "agent:juno:ios-native-1", agentId: "juno" };
   const iphone = { gatewayDevice: "iphone", person: "gateway-owner" };
   const now = 1_000_000;
@@ -196,7 +199,7 @@ test("a reply goes out silent while Clawy was used more recently on another of t
   assert.ok(!quiet([used("mac", 5), used("iphone", 3, { clientId: "openclaw-ios" })]));
   assert.ok(!quiet([used("mac", 5), used("iphone", 30, { clientId: "openclaw-ios" })]));
   assert.ok(quiet([used("mac", 5), used("iphone", 50, { clientId: "openclaw-ios" })]));
-  // This iPhone left Clawy a moment ago: still the one used last, so an older Mac doesn't quiet it.
+  // This iPhone left Moonstone a moment ago: still the one used last, so an older Mac doesn't quiet it.
   assert.ok(!quiet([used("mac", 60), used("iphone", 5, { clientId: "openclaw-ios", reason: "disconnect" })]));
   // A tie alerts on both; two apps too old to stamp, each showing a chat, are a tie.
   assert.ok(!quiet([used("mac", 5), used("iphone", 5, { clientId: "openclaw-ios" })]));
@@ -260,7 +263,7 @@ test("adding a device takes the right to see what it will get", () => {
 });
 
 test("a sequence only ever goes up, past a clock set back and across restarts", () => {
-  const folder = mkdtempSync(join(tmpdir(), "clawy-"));
+  const folder = mkdtempSync(join(tmpdir(), "moonstone-"));
   const path = join(folder, "state", "sequence");
   const sequence = new Sequence(path);
   assert.equal(sequence.next(1000), 1000);

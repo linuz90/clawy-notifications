@@ -13,8 +13,8 @@ if __package__:
     from .test_notifications import plugin, recipient
 else:
     from test_notifications import plugin, recipient
-from clawy_test_plugin.activity import Activities, activities_registration, activity_registration
-from clawy_test_plugin.delivery import Devices, Delivery, registration
+from moonstone_test_plugin.activity import Activities, activities_registration, activity_registration
+from moonstone_test_plugin.delivery import Devices, Delivery, registration
 
 TRACKING = "7b34eddb-598a-41e0-946e-fd7d0090a124"
 SESSION = "agent:default:ios-native-test"

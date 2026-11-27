@@ -5,7 +5,7 @@ import { registerConnectorApprovals } from "../connector-approvals.ts";
 function fixture(servers?: string[]) {
   const connectorAsks = { juno: { linear: "first", docs: "another" } };
   const config = { mcp: { servers: { linear: {}, doc: {}, docs: {}, "1-notes": {}, "shared.docs": {} } },
-    plugins: { entries: { "clawy-notifications": { config: { connectorAsks } } } } };
+    plugins: { entries: { "moonstone": { config: { connectorAsks } } } } };
   const inventory = servers ?? [...Object.keys(config.mcp.servers), "deepwiki", "shared+docs", "shared-docs-2"];
   let hook: any;
   let readNamespaces: any;
@@ -14,7 +14,7 @@ function fixture(servers?: string[]) {
     runtime: { config: { current: () => config, mutateConfigFile: async ({ mutate }: any) => mutate(config) } },
     registerReload: (registration: unknown) => { reload = registration; },
     registerGatewayMethod: (method: string, handler: unknown) => {
-      assert.equal(method, "clawy.connectors.namespaces");
+      assert.equal(method, "moonstone.connectors.namespaces");
       readNamespaces = handler;
     },
     on: (event: string, listener: unknown) => {
@@ -23,7 +23,7 @@ function fixture(servers?: string[]) {
     },
   } as any, async () => [inventory]);
   assert.equal(available, true);
-  assert.deepEqual(reload, { noopPrefixes: ["plugins.entries.clawy-notifications.config.connectorAsks"] });
+  assert.deepEqual(reload, { noopPrefixes: ["plugins.entries.moonstone.config.connectorAsks"] });
   async function before(toolName: string, agentId = "juno", params: Record<string, unknown> = {}) {
     return hook({ toolName, params }, { agentId });
   }
@@ -61,7 +61,7 @@ test("connector approvals use the current calling agent and MCP namespace", asyn
   }
   assert.equal(await f.ask("linear__create_issue", "atlas"), undefined);
   assert.equal(await f.ask("doc__read"), undefined);
-  assert.equal(await f.ask("clawy_iphone_location"), undefined);
+  assert.equal(await f.ask("moonstone_iphone_location"), undefined);
   Object.assign(f.connectorAsks.juno, { "1-notes": "new" });
   assert.ok(await f.ask("mcp-1-notes__read"));
 });

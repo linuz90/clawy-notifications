@@ -1,6 +1,6 @@
 
 
-const PLUGIN_ID = "clawy-notifications";
+const PLUGIN_ID = "moonstone";
 const CONFIG_PATH = `plugins.entries.${PLUGIN_ID}.config.connectorAsks`;
 
 
@@ -114,7 +114,7 @@ export function registerConnectorApprovals(api                   , load         
   const config = api.runtime.config;
   if (typeof config?.current !== "function" || typeof config.mutateConfigFile !== "function") return false;
   api.registerReload?.({ noopPrefixes: [CONFIG_PATH] });
-  api.registerGatewayMethod("clawy.connectors.namespaces", async ({ respond }) => {
+  api.registerGatewayMethod("moonstone.connectors.namespaces", async ({ respond }) => {
     const inventories = await load(config.current()).catch(() => []);
     respond(true, { namespaces: stableNamespaces(inventories) });
   }, { scope: "operator.read" });

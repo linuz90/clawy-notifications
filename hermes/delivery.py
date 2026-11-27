@@ -1,4 +1,4 @@
-"""Private device file and bounded, off-hook forwarding. No Hermes or Clawy imports."""
+"""Private device file and bounded, off-hook forwarding. No Hermes or Moonstone imports."""
 
 import contextlib
 import fcntl
@@ -19,13 +19,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from .seal import decode, encode, seal
 from .activity import activities_registration
 
-LOG = logging.getLogger("clawy.notifications")
+LOG = logging.getLogger("moonstone.notifications")
 
 
 def forwarder_origin():
     """The one host this plugin posts to, so a registration can't aim your Hermes elsewhere.
-    Set CLAWY_FORWARDER_ORIGIN only to test against a forwarder of your own."""
-    return os.environ.get("CLAWY_FORWARDER_ORIGIN", "https://openclaw-client-relay.linuz90.workers.dev")
+    Set MOONSTONE_FORWARDER_ORIGIN only to test against a forwarder of your own."""
+    return os.environ.get("MOONSTONE_FORWARDER_ORIGIN", "https://openclaw-client-relay.linuz90.workers.dev")
 
 
 MAX_MUTED = 256
@@ -94,10 +94,10 @@ def registration(value):
 
 class Devices:
     def __init__(self, home, sequence_home=None):
-        self.file = Path(home) / "clawy-notifications.json"
+        self.file = Path(home) / "moonstone.json"
         # One recipient is registered in several profiles. Their sequences must never collide.
-        self.sequence = Path(sequence_home or home) / "clawy-notifications.sequence"
-        self.health = Path(home) / "clawy-notifications.deliveries"
+        self.sequence = Path(sequence_home or home) / "moonstone.sequence"
+        self.health = Path(home) / "moonstone.deliveries"
 
     @contextlib.contextmanager
     def locked(self, file=None):
@@ -111,13 +111,13 @@ class Devices:
         """The number sealed into every message: a device opens each number once and never one far
         behind the newest, so nobody who keeps a sealed body can show it again. It runs on the clock
         so a lost file costs nothing, and on the file so a clock set back can't repeat a number."""
-        with self.locked(self.sequence.parent / "clawy-notifications.json"):
+        with self.locked(self.sequence.parent / "moonstone.json"):
             try:
                 last = int(self.sequence.read_text(encoding="ascii"))
             except (OSError, ValueError):
                 last = 0
             value = max(int(time.time() * 1000), last + 1)
-            fd, temp = tempfile.mkstemp(prefix=".clawy-", dir=self.sequence.parent)
+            fd, temp = tempfile.mkstemp(prefix=".moonstone-", dir=self.sequence.parent)
             try:
                 with os.fdopen(fd, "w", encoding="ascii") as out:
                     out.write(str(value))
@@ -164,7 +164,7 @@ class Devices:
             self._save_health(values)
 
     def _save_health(self, values):
-        fd, temp = tempfile.mkstemp(prefix=".clawy-", dir=self.health.parent)
+        fd, temp = tempfile.mkstemp(prefix=".moonstone-", dir=self.health.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as out:
                 json.dump(values, out, separators=(",", ":"))
@@ -186,7 +186,7 @@ class Devices:
             if remove is not None:
                 # A late 410 must not erase a freshly re-registered device with the same id.
                 records = [d for d in records if d != remove]
-            fd, temp = tempfile.mkstemp(prefix=".clawy-", dir=self.file.parent)
+            fd, temp = tempfile.mkstemp(prefix=".moonstone-", dir=self.file.parent)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as out:
                     json.dump(records, out, ensure_ascii=False, separators=(",", ":"))
@@ -210,7 +210,7 @@ class Delivery:
         self.stopping = threading.Event()
         self.activity_handled = lambda device, alert: False
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-        self.worker = threading.Thread(target=self._work, name="clawy-push", daemon=True)
+        self.worker = threading.Thread(target=self._work, name="moonstone-push", daemon=True)
         self.worker.start()
 
     def submit(self, alert):
@@ -219,7 +219,7 @@ class Delivery:
         try:
             self.pending.put_nowait(alert)
         except queue.Full:
-            LOG.warning("Clawy push queue full; dropped notification")
+            LOG.warning("Moonstone push queue full; dropped notification")
 
     def submit_activity(self, device, event, callback):
         if self.stopping.is_set():
@@ -227,7 +227,7 @@ class Delivery:
         try:
             self.pending.put_nowait((device, event, callback))
         except queue.Full:
-            LOG.warning("Clawy push queue full; dropped activity")
+            LOG.warning("Moonstone push queue full; dropped activity")
 
     def _activity_post(self, device, event):
         body = json.dumps(event, separators=(",", ":")).encode()
@@ -261,7 +261,7 @@ class Delivery:
                     try:
                         callback(self._activity_post(device, event))
                     except Exception:
-                        LOG.warning("Clawy activity push failed")
+                        LOG.warning("Moonstone activity push failed")
                     continue
                 for device in self.devices.all():
                     if self.activity_handled(device, alert):
@@ -269,9 +269,9 @@ class Delivery:
                     try:
                         self.send(device, for_device(alert, device))
                     except Exception:
-                        LOG.warning("Clawy push failed")  # Exception text can contain secrets.
+                        LOG.warning("Moonstone push failed")  # Exception text can contain secrets.
             except Exception:
-                LOG.warning("Clawy device file unavailable")
+                LOG.warning("Moonstone device file unavailable")
             finally:
                 self.pending.task_done()
 
@@ -320,9 +320,9 @@ class Delivery:
             if code in (401, 410):
                 self.devices.change(remove=device)
             elif code in (400, 413):
-                LOG.warning("Clawy forwarder rejected malformed push (%d)", code)
+                LOG.warning("Moonstone forwarder rejected malformed push (%d)", code)
             elif code == 502 and attempt == 0:
                 continue
             elif code not in (200, 202):
-                LOG.warning("Clawy forwarder dropped push (%d)", code)
+                LOG.warning("Moonstone forwarder dropped push (%d)", code)
             return code  # 429 is dropped; no retry, so no Retry-After wait is needed.

@@ -1,7 +1,7 @@
 {
-  "name": "clawy-notifications",
-  "version": "0.5.1",
-  "description": "Sealed push notifications for Clawy: routes alerts on your own gateway and encrypts them to your device.",
+  "name": "moonstone",
+  "version": "0.6.0",
+  "description": "Sealed push notifications for Moonstone: routes alerts on your own gateway and encrypts them to your device.",
   "license": "MIT",
   "type": "module",
   "files": [
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/linuz90/clawy-notifications.git"
+    "url": "https://github.com/linuz90/moonstone-plugin.git"
   },
   "private": true
 }

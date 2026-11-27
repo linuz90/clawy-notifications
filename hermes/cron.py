@@ -1,4 +1,4 @@
-"""Cron delivery into the profile's chats as Clawy shows them (Hermes issue #83904, Clawy #206, #657)."""
+"""Cron delivery into the profile's chats as Moonstone shows them (Hermes issue #83904 and app issues #206 and #657)."""
 
 import asyncio
 from contextlib import contextmanager
@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-LOG = logging.getLogger('clawy.notifications')
+LOG = logging.getLogger('moonstone.notifications')
 
 
 def _deliver_text(value):
@@ -23,19 +23,19 @@ def _deliver_text(value):
     return str(value).strip() or None
 
 
-def _rerouted(delivery, origin_chat, is_clawy):
-    """*delivery* with each leg that names a Clawy chat through Hermes's own `local:<chat>` lane
-    sent to `clawy:<chat>` instead, or None when nothing changes. That lane needs a gateway receipt,
-    which a dashboard chat never gets: a result for a Clawy chat fails at every fire with
+def _rerouted(delivery, origin_chat, is_moonstone):
+    """*delivery* with each leg that names a Moonstone chat through Hermes's own `local:<chat>` lane
+    sent to `moonstone:<chat>` instead, or None when nothing changes. That lane needs a gateway receipt,
+    which a dashboard chat never gets: a result for a Moonstone chat fails at every fire with
     `_ReceiptRefused('storage_unavailable')`. This platform writes the same note. *origin_chat* is
-    the Clawy chat an `origin` leg means, if any."""
+    the Moonstone chat an `origin` leg means, if any."""
     parts = [part.strip() for part in delivery.split(',')]
 
     def leg(part):
         if origin_chat and part.lower() == 'origin':
-            return 'clawy:' + origin_chat
+            return 'moonstone:' + origin_chat
         chat = part[6:].strip() if part[:6].lower() == 'local:' else ''
-        return 'clawy:' + chat if chat and is_clawy(chat) else part
+        return 'moonstone:' + chat if chat and is_moonstone(chat) else part
 
     legs = [leg(part) for part in parts]
     # Two legs can now name the same chat; legs it didn't reroute stay exactly as given.
@@ -104,7 +104,7 @@ class _Sessions:
             return bindings.validate_lineage(bindings.receipt(owner))
 
     def note(self, session, receipt, content):
-        self.store.messages.append_completion_note(session, receipt, content, 'internal_notification', {'clawy_automation': True})
+        self.store.messages.append_completion_note(session, receipt, content, 'internal_notification', {'moonstone_automation': True})
 
 
 class _LegacySessions:
@@ -140,17 +140,17 @@ class _LegacySessions:
         return target if target != session else None
 
     def note(self, session, receipt, content):
-        self.db.append_completion_note(session, receipt, content, 'internal_notification', {'clawy_automation': True})
+        self.db.append_completion_note(session, receipt, content, 'internal_notification', {'moonstone_automation': True})
 
 
-# Sessions Hermes runs for its own work, which Clawy doesn't list as chats.
+# Sessions Hermes runs for its own work, which Moonstone doesn't list as chats.
 _INTERNAL_SOURCES = frozenset({'cron', 'subagent', 'sub_agent', 'delegate', 'kanban'})
 
 
 def _is_listed(source, hidden, model_config=None):
-    """A session with this stored source, visibility and creation config is a chat Clawy lists, begun
-    on any surface: an automation asked for from Clawy in a terminal or Telegram chat posts there too
-    (Clawy #657). Hidden ones (a bot's room) and Hermes's own work stay out, as they do of Clawy's
+    """A session with this stored source, visibility and creation config is a chat Moonstone lists, begun
+    on any surface: an automation asked for from Moonstone in a terminal or Telegram chat posts there too
+    (app issue #657). Hidden ones (a bot's room) and Hermes's own work stay out, as they do of the app's
     list, a delegate child too, which keeps its parent's source and says so in `model_config`."""
     if isinstance(model_config, str):
         try:
@@ -161,19 +161,19 @@ def _is_listed(source, hidden, model_config=None):
     return not hidden and not delegated and source not in _INTERNAL_SOURCES
 
 
-class NotClawyChat(Exception):
+class NotAppChat(Exception):
     """The target is no chat of this profile; store errors never mean this."""
 
 
 class CronDelivery:
     def __init__(self, home, notify):
         self.home = Path(home)
-        self.file = self.home / 'clawy-cron.db'
+        self.file = self.home / 'moonstone-cron.db'
         self.notify = notify
         self.stopping = threading.Event()
         self.wake = threading.Event()
         self.repaired, self.first_pass = False, threading.Event()
-        self.worker = threading.Thread(target=self._work, name='clawy-cron', daemon=True)
+        self.worker = threading.Thread(target=self._work, name='moonstone-cron', daemon=True)
         self.worker.start()
         # Let the first job repair land before Hermes's scheduler can claim a due job on the broken
         # route (a one-shot fires once), but never hold up registration on a busy job lock: Hermes
@@ -207,60 +207,60 @@ class CronDelivery:
                        if (routed := self._route(action, key, args.get(key))) is not None}
         except Exception:
             # Saved unrouted, the job could keep a `local:<chat>` route that never delivers.
-            LOG.warning('Clawy could not check a delivery target')
-            return {'action': 'block', 'message': "Couldn't check whether this job delivers to a Clawy chat, "
+            LOG.warning('Moonstone could not check a delivery target')
+            return {'action': 'block', 'message': "Couldn't check whether this job delivers to a Moonstone chat, "
                                                   'so it was not saved. Try again in a moment.'}
         if changes:
             return {'action': 'modify', 'args': changes}
 
     def _route(self, action, key, value):
-        """*key*'s value routed into Clawy, or None to leave it as requested."""
+        """*key*'s value routed into Moonstone, or None to leave it as requested."""
         delivery = _deliver_text(value)
         if delivery is None:
             chat = self._current_chat() if key == 'deliver' and action == 'create' else None
-            return 'clawy:' + chat if chat else None
+            return 'moonstone:' + chat if chat else None
         # On update, `origin` means the job's stored origin, not the chat the update comes from;
         # `repair_jobs` fixes a stored one.
         here = action == 'create' and any(part.strip().lower() == 'origin' for part in delivery.split(','))
-        return _rerouted(delivery, self._current_chat() if here else None, self._is_clawy)
+        return _rerouted(delivery, self._current_chat() if here else None, self._is_moonstone)
 
     def _current_chat(self):
         from gateway.session_context import get_session_env
         if get_session_env('HERMES_CRON_SESSION'):
             return None
-        if get_session_env('HERMES_SESSION_SOURCE') == 'clawy':
+        if get_session_env('HERMES_SESSION_SOURCE') == 'moonstone':
             return get_session_env('HERMES_SESSION_KEY') or None
-        # A Clawy chat's turn the gateway runs itself (a prompt forwarded to the owner while it
+        # A Moonstone chat's turn the gateway runs itself (a prompt forwarded to the owner while it
         # holds work for the chat) names it as a Hermes local chat and sets no source, so Hermes
         # would store `origin` as `local:<chat>`, the lane above that never delivers.
         platform, chat = get_session_env('HERMES_SESSION_PLATFORM'), get_session_env('HERMES_SESSION_CHAT_ID')
-        if platform == 'local' and chat and self._is_clawy(chat):
+        if platform == 'local' and chat and self._is_moonstone(chat):
             return chat
         # A dashboard prompt names no delivery lane: no platform, no chat id, the chat's stored id as
         # its session key, and the dashboard tab that sent it (an editor's ACP turn names none). That's
-        # a message sent from Clawy in a chat begun on another surface (the terminal, a messaging app),
-        # or in a Clawy chat Hermes resumed without its source; Hermes's own TUI and Desktop prompts
+        # a message sent from Moonstone in a chat begun on another surface (the terminal, a messaging app),
+        # or in a Moonstone chat Hermes resumed without its source; Hermes's own TUI and Desktop prompts
         # look the same. Hermes would save `origin` with no origin, which goes to the profile's home
         # channel or nowhere, though its cronjob tool tells the model a local chat's default writes the
-        # result into that chat, so the result goes there (Clawy #657).
+        # result into that chat, so the result goes there (app issue #657).
         session = get_session_env('HERMES_SESSION_KEY')
         if (not platform and not chat and session and get_session_env('HERMES_UI_SESSION_ID')
                 and self._is_chat(session)):
             return session
         return None
 
-    def _is_clawy(self, session):
+    def _is_moonstone(self, session):
         with _sessions(self.home) as state:
-            return state.source(session) == 'clawy'
+            return state.source(session) == 'moonstone'
 
     def _is_chat(self, session):
         with _sessions(self.home) as state:
             return state.listed(session)
 
     def repair_jobs(self):
-        """Point this profile's jobs saved before the hook routed them (0.4.8) at `clawy:<chat>`:
-        one made in a Clawy chat's gateway-run turn, or told `local:<chat>`, names the chat through
-        Hermes's `local:` lane and never delivers. Only legs naming a Clawy chat of this profile change.
+        """Point this profile's jobs saved before the hook routed them (0.4.8) at `moonstone:<chat>`:
+        one made in a Moonstone chat's gateway-run turn, or told `local:<chat>`, names the chat through
+        Hermes's `local:` lane and never delivers. Only legs naming a Moonstone chat of this profile change.
         False when the pass must run again: an edit since the first read named a chat not looked up."""
         try:
             from cron import jobs
@@ -276,7 +276,7 @@ class CronDelivery:
 
                 def look_up(chat):
                     if chat not in known:
-                        known[chat] = state.source(chat) == 'clawy'
+                        known[chat] = state.source(chat) == 'moonstone'
                     return known[chat]
 
                 # Look the chats up first, so Hermes's job lock is never held across store reads.
@@ -304,25 +304,25 @@ class CronDelivery:
                 if repaired:
                     save(records)
         if repaired:
-            LOG.info('Clawy pointed %d automation(s) back at their chat', repaired)
+            LOG.info('Moonstone pointed %d automation(s) back at their chat', repaired)
         return not missed
 
     def _try_repair(self):
         try:
             return self.repair_jobs()
         except Exception:
-            LOG.warning('Clawy could not check automations for a broken chat route')
+            LOG.warning('Moonstone could not check automations for a broken chat route')
             return False
 
     @staticmethod
-    def _repairs(job, is_clawy):
+    def _repairs(job, is_moonstone):
         origin = job.get('origin') if isinstance(job.get('origin'), dict) else {}
         chat = str(origin.get('chat_id') or '').strip() if str(origin.get('platform') or '').strip().lower() == 'local' else ''
-        origin_chat = chat if chat and is_clawy(chat) else None
+        origin_chat = chat if chat and is_moonstone(chat) else None
         changes = {}
         for key in ('deliver', 'failure_deliver'):
             delivery = _deliver_text(job.get(key))
-            routed = _rerouted(delivery, origin_chat, is_clawy) if delivery else None
+            routed = _rerouted(delivery, origin_chat, is_moonstone) if delivery else None
             if routed:
                 changes[key] = routed
         return changes
@@ -330,7 +330,7 @@ class CronDelivery:
     @staticmethod
     def _target(state, session):
         if not state.listed(session):
-            raise NotClawyChat('Target must be a chat in this profile')
+            raise NotAppChat('Target must be a chat in this profile')
         # A local reset moves the transcript without extending its compression chain.
         # Read the same stored binding as Hermes's local lane (README, What could break).
         try:
@@ -342,7 +342,7 @@ class CronDelivery:
         if target is None:
             return state.tip(session)
         if target != session and not state.listed(target):
-            raise NotClawyChat('Target must be a chat in this profile')
+            raise NotAppChat('Target must be a chat in this profile')
         return target
 
     async def send(self, pconfig, chat_id, message, *, thread_id=None, media_files=None, **_):
@@ -350,7 +350,7 @@ class CronDelivery:
         # Give EACH invocation an admission id: equal text on recurring fires is not a retry.
         # The scheduler itself never replays a claimed send; our own restarts replay this id.
         if thread_id:
-            return {'error': 'Clawy chats have no delivery threads'}
+            return {'error': 'Moonstone chats have no delivery threads'}
         content = message
         for item in media_files or ():
             file = item[0] if isinstance(item, (tuple, list)) else item
@@ -360,18 +360,18 @@ class CronDelivery:
                 content += f'\n\nAttachment saved on the Hermes host: {file}'
         try:
             receipt = await asyncio.to_thread(self._enqueue, chat_id, content)
-        except NotClawyChat:
-            return {'error': 'Clawy chat delivery could not be saved'}
+        except NotAppChat:
+            return {'error': 'Moonstone chat delivery could not be saved'}
         except Exception:
-            LOG.warning('Clawy cron result could not be saved')
-            return {'error': 'Clawy chat delivery could not be saved'}
+            LOG.warning('Moonstone cron result could not be saved')
+            return {'error': 'Moonstone chat delivery could not be saved'}
         self.wake.set()
         return {'success': True, 'message_id': receipt, 'media_delivered': bool(media_files)}
 
     def _enqueue(self, session, content):
         with _sessions(self.home) as state:
             self._target(state, session)
-        receipt = 'clawy-cron-' + uuid.uuid4().hex
+        receipt = 'moonstone-cron-' + uuid.uuid4().hex
         self.file.touch(mode=0o600, exist_ok=True)
         self.file.chmod(0o600)
         with self._connect() as conn:
@@ -409,13 +409,13 @@ class CronDelivery:
                     state.note(target, receipt, content)
                 except state.busy:
                     continue
-                except NotClawyChat:
-                    LOG.warning('Clawy cron target is no longer available')
+                except NotAppChat:
+                    LOG.warning('Moonstone cron target is no longer available')
                     self._remove(receipt)
                 except state.contention:
                     raise  # A busy store affects every row; retry on the next pass.
                 except Exception:
-                    LOG.warning('Clawy cron note is waiting for its store')
+                    LOG.warning('Moonstone cron note is waiting for its store')
                     continue
                 else:
                     # Idempotent notes let competing processes try the same row. Only the
@@ -437,7 +437,7 @@ class CronDelivery:
             try:
                 self.flush()
             except Exception:
-                LOG.warning('Clawy cron delivery is waiting for its store')
+                LOG.warning('Moonstone cron delivery is waiting for its store')
 
 
 def adapter(delivery, config):
@@ -446,7 +446,7 @@ def adapter(delivery, config):
     from gateway.config import Platform
     from gateway.platforms.base import BasePlatformAdapter, SendResult
 
-    class ClawyAdapter(BasePlatformAdapter):
+    class AppAdapter(BasePlatformAdapter):
         async def connect(self, *, is_reconnect=False):
             self._mark_connected()
             return True
@@ -477,6 +477,6 @@ def adapter(delivery, config):
             return await self._media(chat_id, audio_path, caption)
 
         async def get_chat_info(self, chat_id):
-            return {'name': 'Clawy chat', 'type': 'dm'}
+            return {'name': 'Moonstone chat', 'type': 'dm'}
 
-    return ClawyAdapter(config, Platform('clawy'))
+    return AppAdapter(config, Platform('moonstone'))

@@ -1,4 +1,4 @@
-// A stand-in for Clawy's forwarder: it holds a device's keys, opens what a plugin posts and keeps
+// A stand-in for Moonstone's forwarder: it holds a device's keys, opens what a plugin posts and keeps
 // it, so a contract test can check what really left the gateway. No Apple, no network.
 import { createDecipheriv, createECDH, hkdfSync, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
